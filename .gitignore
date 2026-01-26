@@ -1,0 +1,7 @@
+.env
+
+.venv 
+tools/__pycache__/
+__pycache__/
+*.pyc
+test.py
