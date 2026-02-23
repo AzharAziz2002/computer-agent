@@ -5,3 +5,7 @@ tools/__pycache__/
 __pycache__/
 *.pyc
 test.py
+uv.lock
+.claude
+.claude/
+CLAUDE.md
