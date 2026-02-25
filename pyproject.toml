@@ -5,11 +5,31 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "anthropic>=0.68.1",
+    # root project deps
+    "anthropic>=0.83.0",
     "keyboard>=0.13.5",
-    "pillow>=11.3.0",
+    "pillow>=12.1.1",
     "pyautogui>=0.9.54",
-    "python-dotenv>=1.1.1",
+    "python-dotenv>=1.2.1",
     "pywin32>=311",
     "uiautomation>=2.0.29",
+    # medusa package deps
+    "rapidfuzz>=3.12.0",
+    "ipykernel>=7.2.0",
+    "markdownify>=1.2.2",
+    "psutil>=7.2.2",
+    "pydantic>=2.12.5",
+    "python-levenshtein>=0.27.3",
+    "rich>=14.3.3",
+    "tabulate>=0.9.0",
+    "twine>=6.2.0",
+    "uuid7>=0.1.0",
+    "posthog>=7.8.0",
+    "groq>=1.0.0",
+    "google-genai>=1.56.0",
+    "openai>=2.21.0",
+    "ollama>=0.6.1",
+    "cerebras-cloud-sdk>=1.67.0",
+    "mistralai>=1.12.3",
+    "comtypes>=1.4.15",
 ]
