@@ -1,9 +1,7 @@
 ```xml
 <input>
     <agent_state>
-        Steps: {steps}/{max_steps}
-                                          
-        Action Response: {observation}
+        Step: {steps}
     </agent_state>
 </input>
 ```

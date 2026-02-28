@@ -8,4 +8,11 @@ test.py
 uv.lock
 .claude
 .claude/
-CLAUDE.md
+observe.txt
+
+
+LOGS/
+SUMMARY/
+tests/
+TODO/
+.claudeignore

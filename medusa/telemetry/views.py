@@ -17,7 +17,6 @@ class BaseTelemetryEvent(ABC):
 class AgentTelemetryEvent(BaseTelemetryEvent):
     query: str
     steps: int
-    max_steps: int
     model:str
     provider:str
     use_vision:bool=False

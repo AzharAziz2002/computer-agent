@@ -1,4 +1,4 @@
-from medusa.orchestrator.tools.views import Click, Type, Scroll, Drag, Move, Shortcut, Wait, Scrape, Done, Shell, Memory, App, MultiSelect, MultiEdit
+from medusa.orchestrator.tools.views import DesktopAction, Scrape, Done, Shell, Memory, App
 from medusa.orchestrator.tools.guard import CommandGuard
 from medusa.orchestrator.desktop.controller import Desktop
 from typing import Literal,Optional
@@ -171,171 +171,74 @@ def shell_tool(command: str,**kwargs) -> str:
     response,status=desktop.execute_command(command)
     return f'Response: {response}\nStatus Code: {status}'
 
-@Tool('Click Tool',args_schema=Click)
-def click_tool(loc:Optional[tuple[int,int]]=None,button:Literal['left','right','middle']='left',clicks:int=1,**kwargs)->str:
+@Tool('Desktop Tool',args_schema=DesktopAction)
+def desktop_tool(action:str,**kwargs)->str:
     '''
-    Performs mouse click operations on UI elements at specified coordinates.
-    
-    Click patterns:
-        - Single left click: Select elements, focus input fields
-        - Double left click: Open apps, folders, files
-        - Single right click: Open context menus
-        - Middle click: Browser-specific actions
-    
-    Automatically detects UI elements under cursor and adjusts click behavior 
-    for reliable interaction. Essential for all point-and-click UI operations.
-    '''
-    x,y=loc
-    desktop:Desktop=kwargs['desktop']
-    desktop.click(loc,button,clicks)
-    num_clicks={1:'Single',2:'Double',3:'Triple'}
-    return f'{num_clicks.get(clicks)} {button} clicked at ({x},{y}).'
-
-@Tool('Type Tool',args_schema=Type)
-def type_tool(loc:Optional[tuple[int,int]]=None,text:str='',clear:Literal['true','false']='false',caret_position:Literal['start','idle','end']='idle',press_enter:Literal['true','false']='false',**kwargs):
-    '''
-    Types text into input fields, text areas, and focused UI elements.
-    
-    Features:
-        - Click target element and input text automatically
-        - Clear existing content before typing (clear='true')
-        - Position caret at start, end, or leave idle
-        - Optionally press Enter after typing
-    
-    Use for form filling, search queries, text editing, and any text input operation.
-    The tool automatically clicks the target element coordinates to ensure focus before typing.
-    '''
-    x,y=loc
-    desktop:Desktop=kwargs['desktop']
-    desktop.type(loc,text,clear,caret_position,press_enter)
-    return f'Typed {text} at ({x},{y}).'
-
-@Tool('Scroll Tool',args_schema=Scroll)
-def scroll_tool(loc:Optional[tuple[int,int]]=None,type:Literal['horizontal','vertical']='vertical',direction:Literal['up','down','left','right']='down',wheel_times:int=1,**kwargs)->str:
-    '''
-    Scrolls content vertically or horizontally at specified or current cursor location.
-    
-    Use cases:
-        - Navigate through long webpages and documents
-        - Browse lists, tables, and scrollable containers
-        - Access off-screen content in any scrollable area
-    
-    Parameters:
-        - wheel_times: Controls scroll distance (1 wheel ≈ 3-5 lines of text)
-        - direction: Scroll direction: 'up'/'down' for vertical, 'left'/'right' for horizontal
-        - loc: Target coordinates (if None, scrolls at current cursor position)
-    
-    Essential tool for accessing content beyond the visible viewport.
+    Unified desktop interaction tool for all mouse, keyboard, and UI actions.
+    Actions:
+             - click: Click at coordinates (loc, button, clicks)
+             - type: Type text into element (loc, text, clear, caret_position, press_enter)
+             - scroll: Scroll content (loc, scroll_type, direction, wheel_times)
+             - drag: Drag from current cursor to destination (loc)
+             - move: Move cursor without clicking (loc)
+             - shortcut: Press keyboard shortcut (shortcut)
+             - wait: Pause execution (duration)
+             - multi_select: Select multiple elements (press_ctrl, elements)
+             - multi_edit: Type into multiple fields (elements)
     '''
     desktop:Desktop=kwargs['desktop']
-    response=desktop.scroll(loc,type,direction,wheel_times)
-    if response:
-        return response
-    return f'Scrolled {type} {direction} by {wheel_times} wheel times.'
+    match action:
+        case 'click':
+            loc=kwargs['loc']
+            button=kwargs.get('button','left')
+            clicks=kwargs.get('clicks',1)
+            desktop.click(loc,button,clicks)
+            num={1:'Single',2:'Double'}.get(clicks,str(clicks))
+            return f'{num} {button} clicked at ({loc[0]},{loc[1]}).'
 
-@Tool('Drag Tool',args_schema=Drag)
-def drag_tool(loc:tuple[int,int],**kwargs)->str:
-    '''
-    Performs drag-and-drop operations from current location of cursor to destination coordinates.
-    
-    Common use cases:
-        - Move files and folders between locations
-        - Resize windows by dragging edges or corners
-        - Rearrange UI elements that support drag-and-drop
-        - Select text or multiple items by dragging
-    
-    Simulates holding down the mouse button at the current location of the cursor and releasing 
-    at the destination, enabling drag-based interactions.
-    '''
-    x,y=loc
-    desktop:Desktop=kwargs['desktop']
-    desktop.drag(loc)
-    return f'Dragged the selected element to ({x},{y}).'
+        case 'type':
+            loc=kwargs['loc']
+            text=kwargs['text']
+            desktop.type(loc,text,kwargs.get('clear','false'),
+                         kwargs.get('caret_position','idle'),
+                         kwargs.get('press_enter','false'))
+            return f'Typed {text} at ({loc[0]},{loc[1]}).'
 
-@Tool('Move Tool',args_schema=Move)
-def move_tool(loc:tuple[int,int],**kwargs)->str:
-    '''
-    Moves mouse cursor to specific coordinates without performing any click action.
-    
-    Use cases:
-        - Hover over elements to reveal tooltips or hidden menus
-        - Position cursor before executing other mouse actions
-        - Trigger hover-based UI effects and interactions
-        - Navigate cursor to prepare for subsequent operations
-    
-    Non-invasive cursor positioning for setup and hover-based interactions.
-    '''
-    x,y=loc
-    desktop:Desktop=kwargs['desktop']
-    desktop.move(loc)
-    return f'Moved the mouse pointer to ({x},{y}).'
+        case 'scroll':
+            loc=kwargs.get('loc')
+            st=kwargs.get('scroll_type','vertical')
+            direction=kwargs.get('direction','down')
+            wt=kwargs.get('wheel_times',1)
+            resp=desktop.scroll(loc,st,direction,wt)
+            return resp or f'Scrolled {st} {direction} by {wt} wheel times.'
 
-@Tool('Shortcut Tool',args_schema=Shortcut)
-def shortcut_tool(shortcut:str,**kwargs)->str:
-    '''
-    Executes keyboard shortcuts for rapid command execution and navigation.
-    
-    Supports:
-        - Single keys: 'enter', 'escape', 'tab', 'delete'
-        - Key combinations: 'ctrl+c', 'alt+tab', 'ctrl+shift+n'
-        - Multiple keys separated by '+' for simultaneous press
-    
-    Use for common operations like copy/paste, window switching, menu access, 
-    and application-specific shortcuts. More efficient than mouse-based navigation 
-    for many operations.
-    '''
-    desktop:Desktop=kwargs['desktop']
-    desktop.shortcut(shortcut)
-    return f'Pressed {shortcut}.'
+        case 'drag':
+            loc=kwargs['loc']
+            desktop.drag(loc)
+            return f'Dragged to ({loc[0]},{loc[1]}).'
 
-@Tool('Multi Select Tool',args_schema=MultiSelect)
-def multi_select_tool(press_ctrl:Literal['true','false']='true',elements:list[tuple[int,int]]=[],**kwargs)->str:
-    '''
-    Selects mutiple items such as files, folders, or checkboxes if press_ctrl is true and perform redundant clicks if press_ctrl is false.
+        case 'move':
+            loc=kwargs['loc']
+            desktop.move(loc)
+            return f'Moved cursor to ({loc[0]},{loc[1]}).'
 
-    Use cases:
-        - Select multiple items in files, folders, or checkboxes
-        - Mark multiple checkboxes in a form
-        - Repeat clicks on same element
-    
-    Use for common operations like selecting multiple items or repeated clicks.
-    '''
-    desktop:Desktop=kwargs['desktop']
-    desktop.multi_select(press_ctrl,elements)
-    return f'Multi-selected elements at {'\n'.join([f'({x},{y})' for x,y in elements])}.'
+        case 'shortcut':
+            shortcut=kwargs['shortcut']
+            desktop.shortcut(shortcut)
+            return f'Pressed {shortcut}.'
 
-@Tool('Multi Edit Tool',args_schema=MultiEdit)
-def multi_edit_tool(elements:list[tuple[int,int,str]],**kwargs)->str:
-    '''
-    Typing text into multiple input fields.
-    
-    Use cases:
-        - Enter text into multiple text boxes
-        - Fill in forms with multiple fields
-        - Edit multiple lines of text
-    
-    Typing text into multiple input fields, text areas.
-    '''
-    desktop:Desktop=kwargs['desktop']
-    desktop.multi_edit(elements)
-    return f'Multi-edited elements at {','.join([f'({x},{y}) text={text}' for x,y,text in elements])}.'
+        case 'wait':
+            duration=kwargs['duration']
+            sleep(duration)
+            return f'Waited for {duration} seconds.'
 
-@Tool('Wait Tool',args_schema=Wait)
-def wait_tool(duration:int,**kwargs)->str:
-    '''
-    Pauses execution for a specified duration to allow processes to complete.
-    
-    Essential for:
-        - Waiting for applications to launch and initialize
-        - Allowing webpages and content to fully load
-        - Giving animations and transitions time to complete
-        - Ensuring system operations finish before proceeding
-    
-    Use strategic waits to improve reliability when operations need time to complete.
-    Duration is specified in seconds.
-    '''
-    sleep(duration)
-    return f'Waited for {duration} seconds.'
+        case 'multi_select':
+            desktop.multi_select(kwargs.get('press_ctrl','false'),kwargs['elements'])
+            return f'Multi-selected {len(kwargs["elements"])} elements.'
+
+        case 'multi_edit':
+            desktop.multi_edit(kwargs['elements'])
+            return f'Multi-edited {len(kwargs["elements"])} elements.'
 
 @Tool('Scrape Tool',args_schema=Scrape)
 def scrape_tool(url:str,**kwargs)->str:

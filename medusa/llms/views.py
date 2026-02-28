@@ -6,7 +6,15 @@ class ChatLLMUsage(BaseModel):
     total_tokens: int
     image_tokens: int|None = None
 
+class ToolCall(BaseModel):
+    """Represents a single tool call from the LLM response."""
+    id: str|None = None
+    name: str
+    arguments: dict
+    raw: str|None = None  # Provider's raw response object repr
+
 class ChatLLMResponse(BaseModel):
-    content: str|BaseModel| None=None
+    content: str|BaseModel|None = None
     thinking: str|None = None
     usage: ChatLLMUsage|None = None
+    tool_calls: list[ToolCall]|None = None

@@ -1,11 +1,13 @@
 from mistralai import Mistral,HttpClient,AsyncHttpClient,RetryConfig,OptionalNullable, UserMessage, AssistantMessage, SystemMessage as MainMessage, TextChunk, ThinkChunk, ImageURL,ImageURLChunk, ResponseFormat, JSONSchema
-from medusa.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage
-from medusa.llms.views import ChatLLMResponse, ChatLLMUsage
+from mistralai import ToolMessage as MistralToolMessage, Tool as MistralTool, Function, FunctionCall
+from medusa.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolCallMessage, ToolResultMessage
+from medusa.llms.views import ChatLLMResponse, ChatLLMUsage, ToolCall
 from medusa.llms.base import BaseChatLLM
 from typing import Union,Dict,Type
 from dataclasses import dataclass
 from pydantic import BaseModel
 import logging
+import json
 
 @dataclass
 class ChatMistral(BaseChatLLM):
@@ -43,17 +45,47 @@ class ChatMistral(BaseChatLLM):
     @property
     def provider(self) -> str:
         return "mistral"
-    
+
     @property
     def model_name(self) -> str:
         return self.model
-    
+
+    def _format_tools(self, tools: list[dict]) -> list:
+        """Convert generic tool schemas to Mistral format."""
+        return [
+            MistralTool(
+                type="function",
+                function=Function(
+                    name=t["name"],
+                    description=t["description"],
+                    parameters=t["parameters"]
+                )
+            )
+            for t in tools
+        ]
+
     def serialize_messages(self, messages: list[BaseMessage]):
+        """Serialize messages to Mistral format."""
         serialized = []
         for message in messages:
             if isinstance(message, SystemMessage):
                 content=[TextChunk(text=message.content)]
                 serialized.append(MainMessage(content=content))
+            elif isinstance(message, ToolCallMessage):
+                serialized.append(AssistantMessage(
+                    content=message.content or "",
+                    tool_calls=[{
+                        "id": message.tool_call_id,
+                        "type": "function",
+                        "function": FunctionCall(name=message.tool_name, arguments=json.dumps(message.tool_input))
+                    }]
+                ))
+            elif isinstance(message, ToolResultMessage):
+                serialized.append(MistralToolMessage(
+                    content=message.content,
+                    tool_call_id=message.tool_call_id,
+                    name=message.tool_name
+                ))
             elif isinstance(message, HumanMessage):
                 content=[TextChunk(text=message.content)]
                 serialized.append(UserMessage(content=content))
@@ -71,29 +103,47 @@ class ChatMistral(BaseChatLLM):
             else:
                 raise ValueError(f"Unsupported message type: {type(message)}")
         return serialized
-    
-    def invoke(self, messages: list[BaseMessage],structured_output:BaseModel|None=None) -> str:
-        completion=self.client.chat.complete(
+
+    def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None=None) -> ChatLLMResponse:
+        """Invoke Mistral API with optional native tool calling."""
+        params = dict(
             model=self.model,
             messages=self.serialize_messages(messages),
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             stream=False,
-            response_format=ResponseFormat(
+        )
+        if tools:
+            params["tools"] = self._format_tools(tools)
+        if structured_output:
+            params["response_format"] = ResponseFormat(
                 json_schema=JSONSchema(
                     name=structured_output.__class__.__name__,
                     description="Model output structured as JSON schema",
                     schema_definition=structured_output.model_json_schema()
                 ),
                 type="json_schema"
-            ) if structured_output else None
-        )
+            )
+        completion=self.client.chat.complete(**params)
+        msg = completion.choices[0].message
+        tool_calls = []
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    args = json.loads(args)
+                tool_calls.append(ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=args,
+                    raw=str(tc)
+                ))
         if structured_output:
-            content=structured_output.model_validate_json(completion.choices[0].message.content)
+            content=structured_output.model_validate_json(msg.content)
             thinking=None
         else:
             thinking=None
-            ai_contents=completion.choices[0].message.content
+            ai_contents=msg.content
             if isinstance(ai_contents,str):
                 content=ai_contents
             elif isinstance(ai_contents,list):
@@ -110,12 +160,10 @@ class ChatMistral(BaseChatLLM):
         return ChatLLMResponse(
             thinking=thinking,
             content=content,
+            tool_calls=tool_calls if tool_calls else None,
             usage=ChatLLMUsage(
                 prompt_tokens=completion.usage.prompt_tokens,
                 completion_tokens=completion.usage.completion_tokens,
                 total_tokens=completion.usage.total_tokens
             )
         )
-
-
-    

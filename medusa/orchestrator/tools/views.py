@@ -79,21 +79,61 @@ class Memory(SharedBaseModel):
         description="Range of lines to read (start, end) - both 0-indexed, end is exclusive. Example: (0, 10) reads lines 0-9. Optional for read mode."
     )
 
-class Click(SharedBaseModel):
-    loc: tuple[int, int] = Field(
-        ...,
-        description="(x, y) pixel coordinates within the target element's bounding box to perform click action",
-        examples=[(640, 360), (100, 200)]
+class DesktopAction(SharedBaseModel):
+    """Unified schema for all desktop interaction actions."""
+
+    action: Literal['click', 'type', 'scroll', 'drag', 'move', 'shortcut', 'wait', 'multi_select', 'multi_edit'] = Field(
+        ..., description="Desktop interaction action to perform"
     )
+    # Shared coordinate field (click, type, scroll, drag, move, multi_select)
+    loc: Optional[tuple[int, int]] = Field(
+        None, description="(x, y) pixel coordinates for the action target. Required for click, type, drag, move. Optional for scroll (defaults to current cursor)"
+    )
+    # click params
     button: Literal['left', 'right', 'middle'] = Field(
-        description="Mouse button to use: 'left' for selection/activation, 'right' for context menus, 'middle' for browser-specific actions",
-        default='left',
-        examples=['left', 'right']
+        'left', description="[click] Mouse button: 'left' for selection, 'right' for context menu, 'middle' for browser actions"
     )
     clicks: Literal[0, 1, 2] = Field(
-        description="Click count: 0=hover only (no click), 1=single click (select/focus), 2=double click (open/activate)",
-        default=1,
-        examples=[1, 2]
+        1, description="[click] Click count: 0=hover only, 1=single click, 2=double click"
+    )
+    # type params
+    text: Optional[str] = Field(
+        None, description="[type] Text string to type into the focused element"
+    )
+    clear: Literal['true', 'false'] = Field(
+        'false', description="[type] Whether to clear existing text before typing"
+    )
+    caret_position: Literal['start', 'idle', 'end'] = Field(
+        'idle', description="[type] Caret positioning before typing: 'start', 'end', or 'idle' (leave as-is)"
+    )
+    press_enter: Literal['true', 'false'] = Field(
+        'false', description="[type] Whether to press Enter after typing"
+    )
+    # scroll params
+    scroll_type: Literal['horizontal', 'vertical'] = Field(
+        'vertical', description="[scroll] Scroll axis: 'vertical' for up/down, 'horizontal' for left/right"
+    )
+    direction: Literal['up', 'down', 'left', 'right'] = Field(
+        'down', description="[scroll] Scroll direction"
+    )
+    wheel_times: int = Field(
+        1, description="[scroll] Number of scroll wheel increments (1 wheel ~ 3-5 lines)"
+    )
+    # shortcut params
+    shortcut: Optional[str] = Field(
+        None, description="[shortcut] Key combination to press, e.g. 'ctrl+c', 'alt+tab', 'enter'"
+    )
+    # wait params
+    duration: Optional[int] = Field(
+        None, description="[wait] Pause duration in seconds"
+    )
+    # multi_select params
+    press_ctrl: Literal['true', 'false'] = Field(
+        'false', description="[multi_select] Hold Ctrl for additive selection"
+    )
+    # shared for multi_select (list[tuple[int,int]]) and multi_edit (list[tuple[int,int,str]])
+    elements: Optional[list] = Field(
+        None, description="[multi_select] List of (x,y) coordinates. [multi_edit] List of (x,y,text) tuples"
     )
 
 class Shell(SharedBaseModel):
@@ -106,102 +146,6 @@ class Shell(SharedBaseModel):
             'Get-ChildItem -Path C:\\Users -Recurse',
             'echo "Hello World"'
         ]
-    )
-
-class Type(SharedBaseModel):
-    loc: tuple[int, int] = Field(
-        ...,
-        description="(x, y) pixel coordinates within the target input element's bounding box where text will be entered",
-        examples=[(640, 360), (200, 150)]
-    )
-    text: str = Field(
-        ...,
-        description="Text string to type into the focused element",
-        examples=['hello world', 'user@example.com', 'search query']
-    )
-    clear: Literal['true', 'false'] = Field(
-        description="Whether to clear existing text before typing: 'true' replaces all content, 'false' appends to existing text",
-        default='false',
-        examples=['true', 'false']
-    )
-    caret_position: Literal['start', 'idle', 'end'] = Field(
-        description="Caret positioning before typing: 'start' moves to beginning, 'end' moves to end, 'idle' leaves at current position",
-        default='idle',
-        examples=['start', 'end', 'idle']
-    )
-    press_enter: Literal['true', 'false'] = Field(
-        description="Whether to press Enter key after typing text: 'true' submits/confirms input, 'false' leaves cursor in field",
-        default='false',
-        examples=['true', 'false']
-    )
-
-class MultiSelect(SharedBaseModel):
-    press_ctrl: Literal['true', 'false'] = Field(
-        description="Whether to press Ctrl key before performing multiple selection: 'true' selects multiple elements, 'false' leaves cursor in field",
-        default='false',
-        examples=['true', 'false']
-    )
-    elements: list[tuple[int, int]] = Field(
-        ...,
-        description="List of (x, y) pixel coordinates within the target element's bounding box for multiple selection",
-        examples=[[(640, 360), (800, 400)], [(100, 200), (200, 300)]]
-    )
-
-class MultiEdit(SharedBaseModel):
-    elements: list[tuple[int, int, str]] = Field(
-        ...,
-        description="List of (x, y, text) pixel coordinates within the target element's bounding box for multiple editing",
-        examples=[[(640, 360, 'hello'), (800, 400, 'world')], [(100, 200, 'foo'), (200, 300, 'bar')]]
-    )
-
-class Scroll(SharedBaseModel):
-    loc: tuple[int, int] | None = Field(
-        description="(x, y) pixel coordinates where scroll action occurs. If None, scrolls at current cursor position",
-        default=None,
-        examples=[(640, 360), (800, 400), None]
-    )
-    type: Literal['horizontal', 'vertical'] = Field(
-        description="Scroll direction type: 'vertical' for up/down scrolling, 'horizontal' for left/right scrolling",
-        default='vertical',
-        examples=['vertical', 'horizontal']
-    )
-    direction: Literal['up', 'down', 'left', 'right'] = Field(
-        description="Scroll direction: 'up'/'down' for vertical, 'left'/'right' for horizontal movement through content",
-        default='down',
-        examples=['down', 'up', 'right']
-    )
-    wheel_times: int = Field(
-        description="Number of scroll wheel increments (1 wheel ≈ 3-5 lines of text). Higher values scroll further",
-        default=1,
-        examples=[1, 3, 5, 10]
-    )
-
-class Drag(SharedBaseModel):
-    loc: tuple[int, int] = Field(
-        ...,
-        description="(x, y) pixel coordinates of drag operation destination",
-        examples=[(500, 500), (800, 600)]
-    )
-
-class Move(SharedBaseModel):
-    loc: tuple[int, int] = Field(
-        ...,
-        description="(x, y) pixel coordinates to move mouse cursor to without clicking. Used for hovering or positioning",
-        examples=[(640, 360), (100, 100)]
-    )
-
-class Shortcut(SharedBaseModel):
-    shortcut: str = Field(
-        ...,
-        description="Keyboard shortcut to execute. Use '+' to separate simultaneous keys (e.g., 'ctrl+c'). Single keys work too (e.g., 'enter')",
-        examples=['win', 'enter', 'ctrl+c', 'alt+tab', 'ctrl+shift+n', 'escape']
-    )
-
-class Wait(SharedBaseModel):
-    duration: int = Field(
-        ...,
-        description="Time to pause execution in seconds. Use for waiting on app launches, page loads, or animations to complete",
-        examples=[2, 5, 10]
     )
 
 class Scrape(SharedBaseModel):

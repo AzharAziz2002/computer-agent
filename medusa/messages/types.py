@@ -6,7 +6,7 @@ from io import BytesIO
 import base64
 
 class BaseMessage(BaseModel):
-    role: Literal["system", "human", "ai"]
+    role: Literal["system", "human", "ai", "tool"]
     content: str
     
     class Config:
@@ -56,3 +56,36 @@ class AIMessage(BaseMessage):
 
     def __repr__(self) -> str:
         return f"AIMessage(content={self.content})"
+
+class ToolCallMessage(BaseMessage):
+    """AI response that includes a tool call."""
+    role: Literal["ai"] = "ai"
+    content: str = ""
+    tool_call_id: str|None = None
+    tool_name: str = ""
+    tool_input: dict = {}
+
+    def __repr__(self) -> str:
+        return f"ToolCallMessage(tool={self.tool_name}, input={self.tool_input})"
+
+class ToolResultMessage(BaseMessage):
+    """Tool execution result sent back to the model."""
+    role: Literal["tool"] = "tool"
+    content: str = ""
+    tool_call_id: str|None = None
+    tool_name: str = ""
+    image: Image|None = None
+    mime_type: str = "image/png"
+
+    def image_to_base64(self) -> str:
+        buffered = BytesIO()
+        fmt = self.mime_type.split("/")[-1]
+        self.image.save(buffered, format=fmt, quality=80)
+        return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+    def scale_image(self, scale: float = 0.5) -> None:
+        size = (int(self.image.width * scale), int(self.image.height * scale))
+        self.image = self.image.resize(size=size)
+
+    def __repr__(self) -> str:
+        return f"ToolResultMessage(tool={self.tool_name}, content={self.content[:50]})"

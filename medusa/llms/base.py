@@ -14,10 +14,5 @@ class BaseChatLLM(Protocol):
     def provider(self) -> str:
         ...
 
-    @overload
-    def invoke(self, messages: list[BaseMessage],structured_output:BaseModel|None=None) -> ChatLLMResponse:
+    def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output: BaseModel|None=None) -> ChatLLMResponse:
         ...
-
-
-
-    

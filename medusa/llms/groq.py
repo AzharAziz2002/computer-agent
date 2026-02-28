@@ -1,17 +1,18 @@
-from groq.types.chat import ChatCompletionSystemMessageParam,ChatCompletionUserMessageParam,ChatCompletionAssistantMessageParam,ChatCompletionContentPartTextParam,ChatCompletionContentPartImageParam
+from groq.types.chat import ChatCompletionSystemMessageParam,ChatCompletionUserMessageParam,ChatCompletionAssistantMessageParam,ChatCompletionContentPartTextParam,ChatCompletionContentPartImageParam,ChatCompletionToolMessageParam
 from groq.types.chat.completion_create_params import ResponseFormatResponseFormatJsonSchemaJsonSchema,ResponseFormatResponseFormatJsonSchema
-from medusa.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage
+from medusa.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolCallMessage, ToolResultMessage
 from groq.types.chat.chat_completion_content_part_image_param import ImageURL
-from medusa.llms.views import ChatLLMResponse, ChatLLMUsage
+from medusa.llms.views import ChatLLMResponse, ChatLLMUsage, ToolCall
 from medusa.llms.base import BaseChatLLM
 from dataclasses import dataclass
 from pydantic import BaseModel
 from httpx import Client
 from groq import Groq
+import json
 
 @dataclass
 class ChatGroq(BaseChatLLM):
-    def __init__(self, model: str, api_key: str, base_url: str|None=None, temperature: float = 0.7,max_retries: int = 3,timeout: int|None=None, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
+    def __init__(self, model: str, api_key: str, base_url: str|None=None, temperature: float = 0.7, max_retries: int = 3, timeout: int|None=None, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
         self.model = model
         self.api_key = api_key
         self.temperature = temperature
@@ -41,17 +42,48 @@ class ChatGroq(BaseChatLLM):
     @property
     def provider(self) -> str:
         return "groq"
-    
+
     @property
     def model_name(self) -> str:
         return self.model
-    
+
+    def _format_tools(self, tools: list[dict]) -> list[dict]:
+        """Convert generic tool schemas to OpenAI Chat Completions format."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["parameters"]
+                }
+            }
+            for t in tools
+        ]
+
     def serialize_messages(self, messages: list[BaseMessage]):
+        """Serialize messages to Groq format."""
         serialized = []
         for message in messages:
             if isinstance(message, SystemMessage):
                 content=[ChatCompletionContentPartTextParam(type="text",text=message.content)]
                 serialized.append(ChatCompletionSystemMessageParam(role="system",content=content))
+            elif isinstance(message, ToolCallMessage):
+                serialized.append(ChatCompletionAssistantMessageParam(
+                    role="assistant",
+                    content=message.content or None,
+                    tool_calls=[{
+                        "id": message.tool_call_id,
+                        "type": "function",
+                        "function": {"name": message.tool_name, "arguments": json.dumps(message.tool_input)}
+                    }]
+                ))
+            elif isinstance(message, ToolResultMessage):
+                serialized.append(ChatCompletionToolMessageParam(
+                    role="tool",
+                    tool_call_id=message.tool_call_id,
+                    content=message.content
+                ))
             elif isinstance(message, HumanMessage):
                 content=[ChatCompletionContentPartTextParam(type="text",text=message.content)]
                 serialized.append(ChatCompletionUserMessageParam(role="user",content=content))
@@ -69,30 +101,46 @@ class ChatGroq(BaseChatLLM):
             else:
                 raise ValueError(f"Unsupported message type: {type(message)}")
         return serialized
-    
-    def invoke(self, messages: list[BaseMessage],structured_output:BaseModel|None=None) -> str:
-        completion=self.client.chat.completions.create(
+
+    def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None=None) -> ChatLLMResponse:
+        """Invoke Groq API with optional native tool calling."""
+        params = dict(
             model=self.model,
             messages=self.serialize_messages(messages),
             temperature=self.temperature,
-            response_format=ResponseFormatResponseFormatJsonSchema(
+        )
+        if tools:
+            params["tools"] = self._format_tools(tools)
+        if structured_output:
+            params["response_format"] = ResponseFormatResponseFormatJsonSchema(
                 json_schema=ResponseFormatResponseFormatJsonSchemaJsonSchema(
                     name=structured_output.__class__.__name__,
                     description="Model output structured as JSON schema",
                     schema=structured_output.model_json_schema()
                 ),
                 type="json_schema"
-            ) if structured_output else None
-        )
+            )
+        completion = self.client.chat.completions.create(**params)
+        msg = completion.choices[0].message
+        tool_calls = []
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_calls.append(ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments,
+                    raw=str(tc)
+                ))
         if structured_output:
-            content=structured_output.model_validate_json(completion.choices[0].message.content)
-            thinking=None
+            content = structured_output.model_validate_json(msg.content)
+            thinking = None
         else:
-            thinking=completion.choices[0].message.reasoning
-            content=completion.choices[0].message.content
+            thinking = msg.reasoning if hasattr(msg, 'reasoning') else None
+            content = msg.content
         return ChatLLMResponse(
             thinking=thinking,
             content=content,
+            tool_calls=tool_calls if tool_calls else None,
             usage=ChatLLMUsage(
                 prompt_tokens=completion.usage.prompt_tokens,
                 completion_tokens=completion.usage.completion_tokens,
