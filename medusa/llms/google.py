@@ -113,8 +113,19 @@ class ChatGoogle(BaseChatLLM):
                     Part.from_function_call(name=message.tool_name, args=message.tool_input)
                 ]))
             elif isinstance(message, ToolResultMessage):
+                fn_response_parts = None
+                if message.image:
+                    message.scale_image(scale=0.7)
+                    from io import BytesIO
+                    from google.genai.types import FunctionResponsePart
+                    buf = BytesIO()
+                    fmt = message.mime_type.split("/")[-1]
+                    message.image.save(buf, format=fmt, quality=80)
+                    fn_response_parts = [
+                        FunctionResponsePart.from_bytes(data=buf.getvalue(), mime_type=message.mime_type)
+                    ]
                 serialized.append(Content(role="user", parts=[
-                    Part.from_function_response(name=message.tool_name, response={"result": message.content})
+                    Part.from_function_response(name=message.tool_name, response={"result": message.content}, parts=fn_response_parts)
                 ]))
             elif isinstance(message, HumanMessage):
                 serialized.append(Content(role="user", parts=[Part(text=message.content)]))

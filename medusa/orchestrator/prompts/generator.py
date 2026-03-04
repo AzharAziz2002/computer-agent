@@ -1,6 +1,4 @@
 from medusa.orchestrator.desktop.state import DesktopState, Browser
-from medusa.orchestrator.views import AgentData,AgentStep
-from medusa.orchestrator.registry.views import ToolResult
 from medusa.orchestrator.desktop.controller import Desktop
 from importlib.resources import files
 from datetime import datetime
@@ -27,23 +25,15 @@ class Prompt:
         })
 
     @staticmethod
-    def observation_prompt(query:str,agent_step:AgentStep,desktop_state: DesktopState) -> str:
-        """Build full observation with desktop state for the current step."""
+    def screenshot_observation(desktop_state: DesktopState) -> str:
+        """Build accessibility tree observation from desktop state."""
         cursor_location = pg.position()
         tree_state = desktop_state.tree_state
         template = Path(files('medusa.orchestrator.prompts').joinpath('observation.md')).read_text(encoding='utf-8')
         return template.format(**{
-            'steps': agent_step.steps,
-            'active_app': desktop_state.active_app_to_string(),
             'cursor_location': f'({cursor_location.x},{cursor_location.y})',
+            'active_app': desktop_state.active_app_to_string(),
             'apps': desktop_state.apps_to_string(),
             'interactive_elements': tree_state.interactive_elements_to_string() or 'No interactive elements found',
             'scrollable_elements': tree_state.scrollable_elements_to_string() or 'No scrollable elements found',
-            'query': query
         })
-
-    @staticmethod
-    def previous_observation_prompt(step: int) -> str:
-        """Build trimmed observation for older messages (step number only)."""
-        template = Path(files('medusa.orchestrator.prompts').joinpath('previous_observation.md')).read_text(encoding='utf-8')
-        return template.format(steps=step)

@@ -250,7 +250,7 @@ class Desktop:
         
     def click(self,loc:tuple[int,int],button:str='left',clicks:int=2):
         x,y=loc
-        pg.click(x,y,button=button,clicks=clicks,duration=0.1)
+        pg.click(x,y,button=button,clicks=clicks)
 
     def type(self,loc:tuple[int,int],text:str,caret_position:Literal['start','end','none']='none',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
         x,y=loc

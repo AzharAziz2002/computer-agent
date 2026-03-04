@@ -76,6 +76,8 @@ class ChatOpenRouter(BaseChatLLM):
                     }]
                 ))
             elif isinstance(message, ToolResultMessage):
+                # Note: OpenAI Chat Completions API does not support images in tool results;
+                # tool message content only accepts str or text content parts.
                 serialized.append(ChatCompletionToolMessageParam(
                     role="tool",
                     tool_call_id=message.tool_call_id,

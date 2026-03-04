@@ -77,6 +77,8 @@ class ChatCerebras(BaseChatLLM):
                     }]
                 ))
             elif isinstance(message, ToolResultMessage):
+                # Note: Cerebras SDK does not support images in tool results;
+                # tool message content only accepts str or text content parts.
                 serialized.append(MessageToolMessageRequestTyped(
                     role="tool",
                     tool_call_id=message.tool_call_id,

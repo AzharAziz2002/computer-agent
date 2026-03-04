@@ -11,7 +11,7 @@ uv.lock
 observe.txt
 
 
-LOGS/
+/LOGS/
 SUMMARY/
 tests/
 TODO/

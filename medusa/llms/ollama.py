@@ -61,7 +61,15 @@ class ChatOllama(BaseChatLLM):
                     )]
                 ))
             elif isinstance(message, ToolResultMessage):
-                serialized.append(Message(role="tool", content=message.content))
+                if message.image:
+                    message.scale_image(scale=0.7)
+                    from io import BytesIO
+                    buf = BytesIO()
+                    fmt = message.mime_type.split("/")[-1]
+                    message.image.save(buf, format=fmt, quality=80)
+                    serialized.append(Message(role="tool", content=message.content, images=[Image(value=buf.getvalue())]))
+                else:
+                    serialized.append(Message(role="tool", content=message.content))
             elif isinstance(message, HumanMessage):
                 serialized.append(Message(role="user", content=message.content))
             elif isinstance(message, AIMessage):

@@ -103,10 +103,19 @@ class ChatOpenAI(BaseChatLLM):
                     "content": message.content or ""
                 })
             elif isinstance(message, ToolResultMessage):
+                if message.image:
+                    message.scale_image(scale=0.7)
+                    image_url = f"data:{message.mime_type};base64,{message.image_to_base64()}"
+                    output: str | list[dict] = [
+                        {"type": "input_text", "text": message.content},
+                        {"type": "input_image", "image_url": image_url, "detail": "auto"},
+                    ]
+                else:
+                    output = message.content
                 serialized.append({
                     "type": "function_call_output",
                     "call_id": message.tool_call_id,
-                    "output": message.content
+                    "output": output
                 })
             elif isinstance(message, HumanMessage):
                 serialized.append({

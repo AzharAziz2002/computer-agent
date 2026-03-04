@@ -79,10 +79,19 @@ class ChatGroq(BaseChatLLM):
                     }]
                 ))
             elif isinstance(message, ToolResultMessage):
+                if message.image:
+                    message.scale_image(scale=0.7)
+                    image_url=f"data:{message.mime_type};base64,{message.image_to_base64()}"
+                    tool_content=[
+                        ChatCompletionContentPartTextParam(type="text",text=message.content),
+                        ChatCompletionContentPartImageParam(type="image_url",image_url=ImageURL(url=image_url,detail="auto"))
+                    ]
+                else:
+                    tool_content=message.content
                 serialized.append(ChatCompletionToolMessageParam(
                     role="tool",
                     tool_call_id=message.tool_call_id,
-                    content=message.content
+                    content=tool_content
                 ))
             elif isinstance(message, HumanMessage):
                 content=[ChatCompletionContentPartTextParam(type="text",text=message.content)]

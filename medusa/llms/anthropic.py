@@ -51,7 +51,7 @@ class ChatAnthropic(BaseChatLLM):
 
     def _format_tools(self, tools: list[dict]) -> list[dict]:
         """Convert generic tool schemas to Anthropic format."""
-        return [
+        formatted = [
             {
                 "name": t["name"],
                 "description": t["description"],
@@ -59,58 +59,122 @@ class ChatAnthropic(BaseChatLLM):
             }
             for t in tools
         ]
+        if formatted:
+            formatted[-1]["cache_control"] = {"type": "ephemeral"}
+        return formatted
 
     def serialize_messages(self, messages: list[BaseMessage]):
         """Serialize messages to Anthropic format."""
         system_instruction = None
         serialized = []
-        for message in messages:
+        i = 0
+        while i < len(messages):
+            message = messages[i]
             if isinstance(message, SystemMessage):
                 system_instruction = message.content
+                i += 1
             elif isinstance(message, ToolCallMessage):
+                # Collect all interleaved ToolCall+ToolResult pairs for this turn
+                # into a single assistant message + single user message.
+                tool_calls: list[ToolCallMessage] = []
+                tool_results: list[ToolResultMessage] = []
+                j = i
+                while j < len(messages) and isinstance(messages[j], (ToolCallMessage, ToolResultMessage)):
+                    if isinstance(messages[j], ToolCallMessage):
+                        tool_calls.append(messages[j])
+                    else:
+                        tool_results.append(messages[j])
+                    j += 1
+
+                # Single assistant message with all tool_use blocks
                 content = []
-                if message.content:
-                    content.append(TextBlockParam(type="text",text=message.content))
-                content.append(ToolUseBlockParam(
-                    type="tool_use",
-                    id=message.tool_call_id,
-                    name=message.tool_name,
-                    input=message.tool_input
-                ))
-                serialized.append(MessageParam(role="assistant",content=content))
-            elif isinstance(message, ToolResultMessage):
-                result_content = [{"type":"text","text":message.content}]
-                if message.image:
-                    message.scale_image(scale=0.7)
-                    result_content.append({
-                        "type":"image",
-                        "source":{"type":"base64","data":message.image_to_base64(),"media_type":message.mime_type}
-                    })
-                serialized.append(MessageParam(role="user",content=[
-                    ToolResultBlockParam(type="tool_result",tool_use_id=message.tool_call_id,content=result_content)
-                ]))
+                if tool_calls[0].content:
+                    content.append(TextBlockParam(type="text", text=tool_calls[0].content))
+                for tc in tool_calls:
+                    content.append(ToolUseBlockParam(
+                        type="tool_use",
+                        id=tc.tool_call_id,
+                        name=tc.tool_name,
+                        input=tc.tool_input
+                    ))
+                serialized.append(MessageParam(role="assistant", content=content))
+
+                # Single user message with all tool_result blocks
+                result_blocks = []
+                for tr in tool_results:
+                    result_content = [{"type": "text", "text": tr.content}]
+                    if tr.image:
+                        tr.scale_image(scale=0.7)
+                        result_content.append({
+                            "type": "image",
+                            "source": {"type": "base64", "data": tr.image_to_base64(), "media_type": tr.mime_type}
+                        })
+                    result_blocks.append(ToolResultBlockParam(
+                        type="tool_result",
+                        tool_use_id=tr.tool_call_id,
+                        content=result_content
+                    ))
+                if result_blocks:
+                    serialized.append(MessageParam(role="user", content=result_blocks))
+
+                i = j
             elif isinstance(message, HumanMessage):
-                content=[TextBlockParam(type="text",text=message.content)]
-                serialized.append(MessageParam(role="user",content=content))
+                content = [TextBlockParam(type="text", text=message.content)]
+                serialized.append(MessageParam(role="user", content=content))
+                i += 1
             elif isinstance(message, AIMessage):
-                content=[TextBlockParam(type="text",text=message.content)]
-                serialized.append(MessageParam(role="assistant",content=content))
+                content = [TextBlockParam(type="text", text=message.content)]
+                serialized.append(MessageParam(role="assistant", content=content))
+                i += 1
             elif isinstance(message, ImageMessage):
                 message.scale_image(scale=0.7)
-                content=[
-                    TextBlockParam(type="text",text=message.content),
-                    ImageBlockParam(type="image",source=Base64ImageSourceParam(
-                        type="base64",data=message.image_to_base64(),media_type=message.mime_type
+                content = [
+                    TextBlockParam(type="text", text=message.content),
+                    ImageBlockParam(type="image", source=Base64ImageSourceParam(
+                        type="base64", data=message.image_to_base64(), media_type=message.mime_type
                     ))
                 ]
-                serialized.append(MessageParam(role="user",content=content))
+                serialized.append(MessageParam(role="user", content=content))
+                i += 1
             else:
                 raise ValueError(f"Unsupported message type: {type(message)}")
-        return system_instruction,serialized
+        return system_instruction, serialized
+
+    def _apply_cache_control(self, messages: list, cache_query: bool = True):
+        """Apply ephemeral cache breakpoints to stable content."""
+        # Cache the user query (first user message)
+        if cache_query:
+            for msg in messages:
+                if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                    block = msg["content"][0]
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        block["cache_control"] = {"type": "ephemeral"}
+                        break
+
+        # Cache the second-to-last screenshot tool_result
+        screenshot_results = []
+        for msg in messages:
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        content = block.get("content", [])
+                        has_screenshot = any(
+                            isinstance(c, dict) and (
+                                c.get("type") == "image"
+                                or (c.get("type") == "text" and c.get("text", "").startswith("<desktop_state>"))
+                            )
+                            for c in (content if isinstance(content, list) else [])
+                        )
+                        if has_screenshot:
+                            screenshot_results.append(block)
+
+        if len(screenshot_results) >= 2:
+            screenshot_results[-2]["cache_control"] = {"type": "ephemeral"}
 
     def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None = None):
         """Invoke Anthropic API with optional native tool calling."""
         system_instruction, messages = self.serialize_messages(messages)
+        self._apply_cache_control(messages)
         thinking_enabled = self.thinking_budget > -1
         params = dict(
             max_tokens=self.max_tokens,
@@ -123,6 +187,7 @@ class ChatAnthropic(BaseChatLLM):
             params["temperature"] = self.temperature
         if tools:
             params["tools"] = self._format_tools(tools)
+            params["tool_choice"] = {"type": "any"}
         completion = self.client.messages.create(**params)
         if not isinstance(completion,Message):
             raise ValueError("Unexpected response type from Anthropic API")

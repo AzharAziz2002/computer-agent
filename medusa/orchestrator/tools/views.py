@@ -82,8 +82,12 @@ class Memory(SharedBaseModel):
 class DesktopAction(SharedBaseModel):
     """Unified schema for all desktop interaction actions."""
 
-    action: Literal['click', 'type', 'scroll', 'drag', 'move', 'shortcut', 'wait', 'multi_select', 'multi_edit'] = Field(
+    action: Literal['click', 'type', 'scroll', 'drag', 'move', 'shortcut', 'wait', 'multi_select', 'multi_edit', 'screenshot'] = Field(
         ..., description="Desktop interaction action to perform"
+    )
+    # screenshot params
+    mode: Optional[Literal['inspect', 'image']] = Field(
+        None, description="[screenshot] Observation mode: 'inspect' returns accessibility tree text, 'image' returns raw PNG screenshot"
     )
     # Shared coordinate field (click, type, scroll, drag, move, multi_select)
     loc: Optional[tuple[int, int]] = Field(

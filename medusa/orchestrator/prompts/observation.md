@@ -1,29 +1,17 @@
-```xml
-<input>
-    <agent_state>
-        Step: {steps}
-    </agent_state>
-    <desktop_state>
-        Cursor Location: {cursor_location}
-        [Begin of App Info]
-        Foreground App: {active_app}
+<desktop_state>
+    Cursor Location: {cursor_location}
+    [Begin of App Info]
+    Foreground App: {active_app}
 
-        Background Apps:
-        {apps}
-        [End of App Info]
+    Background Apps:
+    {apps}
+    [End of App Info]
 
-        [Begin of Screen]
-        List of Interactive Elements:
-        {interactive_elements}
+    [Begin of Screen]
+    List of Interactive Elements:
+    {interactive_elements}
 
-        List of Scrollable Elements:
-        {scrollable_elements}
-        [End of Screen]
-    </desktop_state>
-    <user_query>
-        {query}
-    </user_query>
-
-Note: Use the `done_tool` if the task is completely over else continue solving with full potential.
-</input>
-```
+    List of Scrollable Elements:
+    {scrollable_elements}
+    [End of Screen]
+</desktop_state>

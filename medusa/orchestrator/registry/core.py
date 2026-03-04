@@ -51,7 +51,9 @@ class Registry:
             return ToolResult(is_success=False, error=f"Tool '{tool_name}' not found.")
         try:
             args=tool.model.model_validate(kwargs)
-            content = tool.invoke(**({'desktop': desktop} | args.model_dump()))
-            return ToolResult(is_success=True, content=content)
+            result = tool.invoke(**({'desktop': desktop} | args.model_dump()))
+            if isinstance(result, ToolResult):
+                return result
+            return ToolResult(is_success=True, content=result)
         except Exception as error:
             return ToolResult(is_success=False, error=str(error))

@@ -1,4 +1,6 @@
 from medusa.orchestrator.tools.views import DesktopAction, Scrape, Done, Shell, Memory, App
+from medusa.orchestrator.prompts.generator import Prompt
+from medusa.orchestrator.registry.views import ToolResult
 from medusa.orchestrator.tools.guard import CommandGuard
 from medusa.orchestrator.desktop.controller import Desktop
 from typing import Literal,Optional
@@ -14,8 +16,7 @@ def done_tool(answer:str,**kwargs):
     Signals task completion and provides the final answer to the user.
     
     Use this tool when you have successfully completed the requested task and have 
-    a comprehensive answer ready. The answer should be well-formatted in markdown 
-    and include all relevant information the user requested.
+    a brief answer ready. The answer should include all relevant information the user requested.
     '''
     return answer
 
@@ -174,7 +175,7 @@ def shell_tool(command: str,**kwargs) -> str:
 @Tool('Desktop Tool',args_schema=DesktopAction)
 def desktop_tool(action:str,**kwargs)->str:
     '''
-    Unified desktop interaction tool for all mouse, keyboard, and UI actions.
+    Desktop interaction tool for all mouse, keyboard, and UI actions.    
     Actions:
              - click: Click at coordinates (loc, button, clicks)
              - type: Type text into element (loc, text, clear, caret_position, press_enter)
@@ -185,6 +186,15 @@ def desktop_tool(action:str,**kwargs)->str:
              - wait: Pause execution (duration)
              - multi_select: Select multiple elements (press_ctrl, elements)
              - multi_edit: Type into multiple fields (elements)
+             - screenshot: Capture desktop state (mode: 'inspect' for accessibility tree, 'image' for PNG)
+    IMPORTANT:
+    Use multiple tool calls in same response with action=screenshot. To act and verify in same turn, without needing an extra turn to call screenshot after.
+    Example workflow:
+    Turn 1: {action='screenshot', mode='inspect'}
+    Turn 2: [{action='click', loc=(x,y), button='left', clicks=2},
+             {action='screenshot', mode='inspect'}]
+    The screenshot action tool call must be in same response with other actions(click, scroll,type, wait, etc.)
+    
     '''
     desktop:Desktop=kwargs['desktop']
     match action:
@@ -240,6 +250,16 @@ def desktop_tool(action:str,**kwargs)->str:
             desktop.multi_edit(kwargs['elements'])
             return f'Multi-edited {len(kwargs["elements"])} elements.'
 
+        case 'screenshot':
+            mode=kwargs.get('mode','inspect')
+            desktop_state=desktop.get_state(use_vision=(mode=='image'))
+            if mode=='image':
+                return ToolResult(is_success=True,content="Screenshot captured.",image=desktop_state.screenshot)
+          
+            else:
+                observation=Prompt.screenshot_observation(desktop_state)
+                return ToolResult(is_success=True,content=observation)
+
 @Tool('Scrape Tool',args_schema=Scrape)
 def scrape_tool(url:str,**kwargs)->str:
     '''
@@ -258,6 +278,8 @@ def scrape_tool(url:str,**kwargs)->str:
     '''
     desktop:Desktop=kwargs['desktop']
     desktop_state=desktop.desktop_state
+    if desktop_state is None:
+        return f'Unable to scrape URL: {url}. Call screenshot first to observe the desktop.'
     tree_state=desktop_state.tree_state
     if not tree_state.dom_node:
         return f'Unable to scrape URL: {url}. No DOM node found.'

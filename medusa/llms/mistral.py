@@ -81,8 +81,17 @@ class ChatMistral(BaseChatLLM):
                     }]
                 ))
             elif isinstance(message, ToolResultMessage):
+                if message.image:
+                    message.scale_image(scale=0.7)
+                    image_url=f"data:{message.mime_type};base64,{message.image_to_base64()}"
+                    tool_content=[
+                        TextChunk(text=message.content),
+                        ImageURLChunk(type="image_url",image_url={"url": image_url, "detail": "auto"})
+                    ]
+                else:
+                    tool_content=message.content
                 serialized.append(MistralToolMessage(
-                    content=message.content,
+                    content=tool_content,
                     tool_call_id=message.tool_call_id,
                     name=message.tool_name
                 ))

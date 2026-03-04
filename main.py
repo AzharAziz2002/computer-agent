@@ -17,7 +17,7 @@ if __name__ == "__main__":
     llm = ChatAnthropic(
         model="claude-haiku-4-5-20251001",
         api_key=os.getenv("CLAUDE_API_KEY"),
-        thinking_budget=1024,
+        thinking_budget=-1,
     )
     agent = Agent(llm=llm, use_vision=False, auto_minimize=True)
     agent.print_response(prompt, start_time=start_time)

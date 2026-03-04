@@ -143,9 +143,17 @@ class SessionLogger:
         if model_name:
             self._model_name = model_name
 
-        # Best-effort: flush queued writes first so summary appears at the end.
-        self._drain_pending_writes(timeout_seconds=3.0)
-        self._stop_background_loop()
+        try:
+            self._drain_pending_writes(timeout_seconds=3.0)
+        except Exception:
+            pass
+
+        try:
+            self._stop_background_loop()
+        except Exception:
+            pass
+
+        # Always write summary — guaranteed last write
         self._write_summary_sync(self._model_name)
 
         try:
@@ -249,7 +257,17 @@ class SessionLogger:
             file.write(content)
 
     def _write_summary_sync(self, model_name: str):
-        self._sync_append(self._build_summary_block(model_name))
+        # Build first, then write in one shot — minimizes interrupt window
+        summary = self._build_summary_block(model_name)
+        try:
+            self._sync_append(summary)
+        except (KeyboardInterrupt, Exception):
+            # Last resort: direct write ignoring all errors
+            try:
+                with open(self.log_path, "a", encoding="utf-8") as f:
+                    f.write(summary)
+            except Exception:
+                pass
 
     def _track_future(self, future: Future):
         with self._pending_lock:
@@ -263,6 +281,7 @@ class SessionLogger:
                     pass
 
         future.add_done_callback(_remove)
+
 
     def _drain_pending_writes(self, timeout_seconds: float):
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
