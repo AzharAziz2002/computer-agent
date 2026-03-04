@@ -89,9 +89,9 @@ class DesktopAction(SharedBaseModel):
     mode: Optional[Literal['inspect', 'image']] = Field(
         None, description="[screenshot] Observation mode: 'inspect' returns accessibility tree text, 'image' returns raw PNG screenshot"
     )
-    # Shared coordinate field (click, type, scroll, drag, move, multi_select)
+    # Shared coordinate field (click, scroll, drag, move, multi_select)
     loc: Optional[tuple[int, int]] = Field(
-        None, description="(x, y) pixel coordinates for the action target. Required for click, type, drag, move. Optional for scroll (defaults to current cursor)"
+        None, description="(x, y) pixel coordinates for the action target. Required for click, drag, move. Optional for scroll (defaults to current cursor)"
     )
     # click params
     button: Literal['left', 'right', 'middle'] = Field(
@@ -100,18 +100,18 @@ class DesktopAction(SharedBaseModel):
     clicks: Literal[0, 1, 2] = Field(
         1, description="[click] Click count: 0=hover only, 1=single click, 2=double click"
     )
-    # type params
+    # type params — type does NOT click; you must click the target element first with a separate click action
     text: Optional[str] = Field(
-        None, description="[type] Text string to type into the focused element"
+        None, description="[type] Text string to type into the currently focused element. Click the target element first before calling type"
     )
     clear: Literal['true', 'false'] = Field(
-        'false', description="[type] Whether to clear existing text before typing"
+        'false', description="[type] Set 'true' to select-all. Use when replacing field content entirely"
     )
     caret_position: Literal['start', 'idle', 'end'] = Field(
-        'idle', description="[type] Caret positioning before typing: 'start', 'end', or 'idle' (leave as-is)"
+        'idle', description="[type] Use when want to move cursor before typing: 'start' = Home key (beginning of field), 'end' = End key (end of field), 'idle' = no movement (type at current cursor position)"
     )
     press_enter: Literal['true', 'false'] = Field(
-        'false', description="[type] Whether to press Enter after typing"
+        'false', description="[type] Set 'true' to press Enter after typing. Use for search bars, address bars, or form submission"
     )
     # scroll params
     scroll_type: Literal['horizontal', 'vertical'] = Field(

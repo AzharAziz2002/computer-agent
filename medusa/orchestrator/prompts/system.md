@@ -54,13 +54,13 @@ You must call screenshot to observe the desktop:
 
 1. First determine whether the required application is already open. If not, launch it.
 2. If the required app is unavailable, attempt a suitable alternative; otherwise report impossibility.
-3. Bring the intended app to focus before interacting with it.
+3. If the target app is already the foreground app in <desktop_state>, do NOT call app_tool to switch — interact with it directly. Only use app_tool(mode='switch') when the app is in the background.
 4. Default to double left-click for opening apps on desktop, files, and folders.
 5. Default to single left-click for UI interactions.
 6. Use hover or cursor movement to reveal tooltips or menus when appropriate.
 7. Use right-click exclusively for context menus.
 8. Use drag actions only when clearly necessary.
-9. Type actions automatically include a click at the target location—do not pre-click.
+9. Always click the target element first before calling type.
 10. Resize windows smaller than 60% of the screen; prefer maximized views.
 11. Wait for loading or animations to complete and verify readiness.
 12. Always verify that an action changed the UI as expected before continuing.
@@ -150,17 +150,6 @@ At each step:
 2. Use the `done_tool` when the task is fully completed.
 
 </response_output>
-
-<use_parallel_tool_calls>
-For maximum efficiency, you MUST use parallel tool calling. After performing any desktop_tool action (click, type, scroll, drag, shortcut, move, wait, multi_select, multi_edit), ALWAYS include a second desktop_tool call with action='screenshot' in the SAME response to immediately observe the result.
-
-Example — a click followed by verification in ONE response:
-  Tool call 1: desktop_tool(action='click', loc=[125, 514], button='left', clicks=1)
-  Tool call 2: desktop_tool(action='screenshot', mode='inspect')
-
-NEVER call a single tool when you can pair an action with a screenshot. The only exception is the very first turn, where you call screenshot alone to observe the initial state.
-Prioritize calling tools in parallel whenever possible.
-</use_parallel_tool_calls>
 
 <constraints>
 

@@ -13,6 +13,7 @@ from PIL import Image
 import win32process
 import subprocess
 import win32gui
+import win32clipboard
 import win32con
 import requests
 import logging
@@ -39,7 +40,7 @@ import medusa.uia as uia
 import pyautogui as pg
 
 pg.FAILSAFE=False
-pg.PAUSE=1.0
+pg.PAUSE=0.0
 
 class Desktop:
     def __init__(self):
@@ -224,6 +225,8 @@ class Desktop:
     
     def bring_window_to_top(self,target_handle:int):
         foreground_handle=win32gui.GetForegroundWindow()
+        if foreground_handle==target_handle:
+            return
         foreground_thread,_=win32process.GetWindowThreadProcessId(foreground_handle)
         target_thread,_=win32process.GetWindowThreadProcessId(target_handle)
         try:
@@ -252,20 +255,16 @@ class Desktop:
         x,y=loc
         pg.click(x,y,button=button,clicks=clicks)
 
-    def type(self,loc:tuple[int,int],text:str,caret_position:Literal['start','end','none']='none',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
-        x,y=loc
-        pg.leftClick(x,y)
+    def type(self,text:str,caret_position:Literal['start','end','idle']='idle',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
+        # loc/leftClick removed — agent clicks the target element before calling type
         if caret_position == 'start':
             pg.press('home')
         elif caret_position == 'end':
             pg.press('end')
-        else:
-            pass
         if clear=='true':
-            pg.sleep(0.5)
             pg.hotkey('ctrl','a')
             pg.press('backspace')
-        pg.typewrite(text,interval=0.02)
+        pg.typewrite(text,interval=0.01)
         if press_enter=='true':
             pg.press('enter')
 
@@ -285,15 +284,15 @@ class Desktop:
                 match direction:
                     case 'left':
                         pg.keyDown('Shift')
-                        pg.sleep(0.05)
+                        pg.sleep(0.02)
                         uia.WheelUp(wheel_times)
-                        pg.sleep(0.05)
+                        pg.sleep(0.02)
                         pg.keyUp('Shift')
                     case 'right':
                         pg.keyDown('Shift')
-                        pg.sleep(0.05)
+                        pg.sleep(0.02)
                         uia.WheelDown(wheel_times)
-                        pg.sleep(0.05)
+                        pg.sleep(0.02)
                         pg.keyUp('Shift')
                     case _:
                         return 'Invalid direction. Use "left" or "right".'
@@ -303,12 +302,12 @@ class Desktop:
     
     def drag(self,loc:tuple[int,int]):
         x,y=loc
-        pg.sleep(0.5)
-        pg.dragTo(x,y,duration=0.6)
+        # pg.sleep(0.5)
+        pg.dragTo(x,y,duration=0.02)
 
     def move(self,loc:tuple[int,int]):
         x,y=loc
-        pg.moveTo(x,y,duration=0.1)
+        pg.moveTo(x,y,duration=0.01)
 
     def shortcut(self,shortcut:str):
         shortcut=shortcut.split('+')
@@ -322,14 +321,15 @@ class Desktop:
             pg.keyDown('ctrl')
         for element in elements:
             x,y=element
-            pg.click(x,y,duration=0.2)
-            pg.sleep(0.5)
+            pg.click(x,y,duration=0.1)
+            pg.sleep(0.0)
         pg.keyUp('ctrl')
     
     def multi_edit(self,elements:list[tuple[int,int,str]|tuple[int,str]]):
         for element in elements:
             x,y,text=element
-            self.type((x,y),text=text,clear='true')
+            self.click((x,y),button='left',clicks=1)
+            self.type(text=text,clear='true')
     
     def scrape(self,url:str)->str:
         response=requests.get(url,timeout=10)

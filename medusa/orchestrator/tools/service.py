@@ -175,10 +175,10 @@ def shell_tool(command: str,**kwargs) -> str:
 @Tool('Desktop Tool',args_schema=DesktopAction)
 def desktop_tool(action:str,**kwargs)->str:
     '''
-    Desktop interaction tool for all mouse, keyboard, and UI actions.    
+    Desktop interaction tool for all mouse, keyboard, and UI actions.
     Actions:
              - click: Click at coordinates (loc, button, clicks)
-             - type: Type text into element (loc, text, clear, caret_position, press_enter)
+             - type: Type into focused element (text, clear, caret_position, press_enter). Click the target first.
              - scroll: Scroll content (loc, scroll_type, direction, wheel_times)
              - drag: Drag from current cursor to destination (loc)
              - move: Move cursor without clicking (loc)
@@ -187,14 +187,21 @@ def desktop_tool(action:str,**kwargs)->str:
              - multi_select: Select multiple elements (press_ctrl, elements)
              - multi_edit: Type into multiple fields (elements)
              - screenshot: Capture desktop state (mode: 'inspect' for accessibility tree, 'image' for PNG)
-    IMPORTANT:
-    Use multiple tool calls in same response with action=screenshot. To act and verify in same turn, without needing an extra turn to call screenshot after.
-    Example workflow:
-    Turn 1: {action='screenshot', mode='inspect'}
-    Turn 2: [{action='click', loc=(x,y), button='left', clicks=2},
-             {action='screenshot', mode='inspect'}]
-    The screenshot action tool call must be in same response with other actions(click, scroll,type, wait, etc.)
-    
+    <use_parallel_tool_calls>
+    MUST Use parallel tool calls where you can:
+    ALWAYS combine related actions into a SINGLE response with multiple tool calls. When the next action logically follows without needing to inspect the result first (e.g. click then type, or action then screenshot), batch them in the same response.
+
+    Example 1 — click + screenshot:
+      [{action='click', loc=(x,y)}, {action='screenshot', mode='inspect'}]
+
+    Example 2 — click + type + screenshot:
+      [{action='click', loc=(x,y)}, {action='type', text='hello', press_enter='true'}, {action='screenshot', mode='inspect'}]
+
+    Example 3(only exception) — first screenshot right after user query is single only:
+      [{action='screenshot', mode='inspect'}] 
+
+    Every response that performs an action(click, type, scroll, move, wait etc ) MUST use parallel tool calls with a action='screenshot' in same response.
+    </use_parallel_tool_calls>
     '''
     desktop:Desktop=kwargs['desktop']
     match action:
@@ -207,12 +214,12 @@ def desktop_tool(action:str,**kwargs)->str:
             return f'{num} {button} clicked at ({loc[0]},{loc[1]}).'
 
         case 'type':
-            loc=kwargs['loc']
             text=kwargs['text']
-            desktop.type(loc,text,kwargs.get('clear','false'),
-                         kwargs.get('caret_position','idle'),
-                         kwargs.get('press_enter','false'))
-            return f'Typed {text} at ({loc[0]},{loc[1]}).'
+            desktop.type(text,
+                         caret_position=kwargs.get('caret_position','idle'),
+                         clear=kwargs.get('clear','false'),
+                         press_enter=kwargs.get('press_enter','false'))
+            return f'Typed "{text}" into focused element.'
 
         case 'scroll':
             loc=kwargs.get('loc')
