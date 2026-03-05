@@ -13,7 +13,6 @@ from PIL import Image
 import win32process
 import subprocess
 import win32gui
-import win32clipboard
 import win32con
 import requests
 import logging
@@ -51,12 +50,12 @@ class Desktop:
     def get_state(self,use_vision:bool=False)->DesktopState:
         sleep(0.1)
         apps=self.get_apps()
-        active_app=self.get_active_app()
+        active_app=self.get_active_app(apps)
         if active_app is not None and (active_app in apps):
             apps.remove(active_app)
         logger.debug(f"Active app: {active_app}")
         logger.debug(f"Apps: {apps}")
-        tree_state=self.tree.get_state(active_app,apps)
+        tree_state=self.tree.get_state(active_app)
         if use_vision:
             screenshot=self.tree.annotated_screenshot(tree_state.interactive_nodes)
         else:
@@ -74,10 +73,10 @@ class Desktop:
             element = element.GetParentControl()
         return None
     
-    def get_active_app(self)->App|None:
+    def get_active_app(self,apps:list[App]=None)->App|None:
         try:
             handle=uia.GetForegroundWindow()
-            for app in self.get_apps():
+            for app in (apps if apps is not None else self.get_apps()):
                 if app.handle!=handle:
                     continue
                 return app

@@ -34,14 +34,27 @@ class Tree:
         self.tree_state=None
         self._last_structure_event = None
 
-    def get_state(self,active_app:App,other_apps:list[App])->TreeState:
+    SYSTEM_CLASSES = {'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Microsoft.UI.Content.PopupWindowSiteBridge'}
+
+    def get_state(self,active_app:App)->TreeState:
         root=GetRootControl()
-        other_apps_handle=set(map(lambda other_app: other_app.handle,other_apps))
-        apps=list(filter(lambda app:(app.NativeWindowHandle not in other_apps_handle) and not self.desktop.is_overlay_app(app),root.GetChildren()))
-        del other_apps_handle
-        if active_app:
-            apps=list(filter(lambda app:app.ClassName!='Progman',apps))
-        interactive_nodes,scrollable_nodes,dom_informative_nodes=self.get_appwise_nodes(apps=apps)
+        active_handle = active_app.handle if active_app else None
+        active_is_browser = active_app.is_browser if active_app else False
+
+        targets = []
+        for child in root.GetChildren():
+            if self.desktop.is_overlay_app(child):
+                continue
+            handle = child.NativeWindowHandle
+            class_name = child.ClassName
+            if active_handle and handle == active_handle:
+                targets.append((child, active_is_browser))
+            elif class_name in self.SYSTEM_CLASSES:
+                targets.append((child, False))
+            elif not active_app and class_name == 'Progman':
+                targets.append((child, False))
+
+        interactive_nodes,scrollable_nodes,dom_informative_nodes=self.get_appwise_nodes(targets)
         root_node=TreeElementNode(
             name="Desktop",
             runtime_id=(),
@@ -76,33 +89,30 @@ class Tree:
         self.tree_state=TreeState(root_node=root_node,dom_node=dom_node,interactive_nodes=interactive_nodes,scrollable_nodes=scrollable_nodes,dom_informative_nodes=dom_informative_nodes)
         return self.tree_state
 
-    def get_appwise_nodes(self,apps:list[Control]) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
+    def get_appwise_nodes(self,targets:list[tuple[Control,bool]]) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
         interactive_nodes, scrollable_nodes, dom_informative_nodes = [], [], []
         with ThreadPoolExecutor() as executor:
-            retry_counts = {app: 0 for app in apps}
-            future_to_app = {
-                executor.submit(
-                    self.get_nodes, app, 
-                    self.desktop.is_app_browser(app)
-                ): app
-                for app in apps
+            retry_counts = {app: 0 for app, _ in targets}
+            future_to_target = {
+                executor.submit(self.get_nodes, app, is_browser): (app, is_browser)
+                for app, is_browser in targets
             }
-            while future_to_app:  # keep running until no pending futures
-                for future in as_completed(list(future_to_app)):
-                    app = future_to_app.pop(future)  # remove completed future
+            while future_to_target:
+                for future in as_completed(list(future_to_target)):
+                    app, is_browser = future_to_target.pop(future)
                     try:
                         result = future.result()
                         if result:
-                            element_nodes, scroll_nodes, dom_informative_nodes = result
+                            element_nodes, scroll_nodes, informative_nodes = result
                             interactive_nodes.extend(element_nodes)
                             scrollable_nodes.extend(scroll_nodes)
-                            dom_informative_nodes.extend(dom_informative_nodes)
+                            dom_informative_nodes.extend(informative_nodes)
                     except Exception as e:
                         retry_counts[app] += 1
                         logger.debug(f"Error in processing node {app.Name}, retry attempt {retry_counts[app]}\nError: {e}")
                         if retry_counts[app] < THREAD_MAX_RETRIES:
-                            new_future = executor.submit(self.get_nodes, app, self.desktop.is_app_browser(app))
-                            future_to_app[new_future] = app
+                            new_future = executor.submit(self.get_nodes, app, is_browser)
+                            future_to_target[new_future] = (app, is_browser)
                         else:
                             logger.error(f"Task failed completely for {app.Name} after {THREAD_MAX_RETRIES} retries")
         return interactive_nodes,scrollable_nodes,dom_informative_nodes
