@@ -10,31 +10,48 @@ class TreeState:
     scrollable_nodes:list['ScrollElementNode']=field(default_factory=list)
     dom_informative_nodes:list['TextElementNode']=field(default_factory=list)
 
-    def interactive_elements_to_string(self) -> str:
+    def interactive_elements_to_string(self, active_app_name: str = '') -> str:
         if not self.interactive_nodes:
             return "No interactive elements"
-        # TOON-like format: Pipe-separated values with clear header
-        # Using abbreviations in header to save tokens
-        header = "# id|app|type|name|val|keys|coords|focus"
-        rows = [header]
+        header = "# id|type|name|content|keys|coords  (|focused if active)"
+        fg_rows = []
+        other_groups: dict[str, list[str]] = {}
         for idx, node in enumerate(self.interactive_nodes):
-            row = f"{idx}|{node.app_name}|{node.control_type}|{node.name}|{node.value}|{node.shortcut}|{node.center.to_string()}|{node.is_focused}"
-            rows.append(row)
-        return "\n".join(rows)
+            row = f"{idx}|{node.control_type}|{node.name}|{node.value}|{node.shortcut}|{node.center.to_string()}"
+            if node.is_focused:
+                row += "|focused"
+            if node.app_name == active_app_name:
+                fg_rows.append(row)
+            else:
+                other_groups.setdefault(node.app_name, []).append(row)
+        lines = [header] + fg_rows
+        for app_name, rows in other_groups.items():
+            lines.append(f"\n[{app_name}]")
+            lines.extend(rows)
+        return "\n".join(lines)
 
-    def scrollable_elements_to_string(self) -> str:
+    def scrollable_elements_to_string(self, active_app_name: str = '') -> str:
         if not self.scrollable_nodes:
             return "No scrollable elements"
-        # TOON-like format
-        header = "# id|app|type|name|coords|h_scroll|h_pct|v_scroll|v_pct|focus"
-        rows = [header]
+        header = "# id|type|name|coords|h_scroll|h_pct|v_scroll|v_pct"
         base_index = len(self.interactive_nodes)
+        fg_rows = []
+        other_groups: dict[str, list[str]] = {}
         for idx, node in enumerate(self.scrollable_nodes):
-            row = (f"{base_index + idx}|{node.app_name}|{node.control_type}|{node.name}|"
+            row = (f"{base_index + idx}|{node.control_type}|{node.name}|"
                    f"{node.center.to_string()}|{node.horizontal_scrollable}|{node.horizontal_scroll_percent}|"
-                   f"{node.vertical_scrollable}|{node.vertical_scroll_percent}|{node.is_focused}")
-            rows.append(row)
-        return "\n".join(rows)
+                   f"{node.vertical_scrollable}|{node.vertical_scroll_percent}")
+            if node.is_focused:
+                row += "|focused"
+            if node.app_name == active_app_name:
+                fg_rows.append(row)
+            else:
+                other_groups.setdefault(node.app_name, []).append(row)
+        lines = [header] + fg_rows
+        for app_name, rows in other_groups.items():
+            lines.append(f"\n[{app_name}]")
+            lines.extend(rows)
+        return "\n".join(lines)
     
 @dataclass
 class BoundingBox:

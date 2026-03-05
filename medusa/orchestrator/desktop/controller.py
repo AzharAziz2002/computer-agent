@@ -372,16 +372,17 @@ class Desktop:
                         continue
                     if window_pattern.CanMinimize and window_pattern.CanMaximize:
                         bounding_rect=child.BoundingRectangle
-                        if bounding_rect.isempty():
+                        is_minimized=uia.IsIconic(child.NativeWindowHandle)
+                        if bounding_rect.isempty() and not is_minimized:
                             continue
-                        status = self.get_app_status(child)
+                        status = Status.MINIMIZED if is_minimized else self.get_app_status(child)
                         bounding_box=BoundingBox(
-                            left=bounding_rect.left,
-                            top=bounding_rect.top,
-                            right=bounding_rect.right,
-                            bottom=bounding_rect.bottom,
-                            width=bounding_rect.width(),
-                            height=bounding_rect.height()
+                            left=0 if is_minimized else bounding_rect.left,
+                            top=0 if is_minimized else bounding_rect.top,
+                            right=0 if is_minimized else bounding_rect.right,
+                            bottom=0 if is_minimized else bounding_rect.bottom,
+                            width=0 if is_minimized else bounding_rect.width(),
+                            height=0 if is_minimized else bounding_rect.height()
                         )
                         apps.append(App(**{
                             "name":child.Name,

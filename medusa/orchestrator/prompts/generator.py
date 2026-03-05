@@ -30,10 +30,11 @@ class Prompt:
         cursor_location = pg.position()
         tree_state = desktop_state.tree_state
         template = Path(files('medusa.orchestrator.prompts').joinpath('observation.md')).read_text(encoding='utf-8')
+        active_app_name = desktop_state.active_app.name if desktop_state.active_app else ''
         return template.format(**{
             'cursor_location': f'({cursor_location.x},{cursor_location.y})',
             'active_app': desktop_state.active_app_to_string(),
             'apps': desktop_state.apps_to_string(),
-            'interactive_elements': tree_state.interactive_elements_to_string() or 'No interactive elements found',
-            'scrollable_elements': tree_state.scrollable_elements_to_string() or 'No scrollable elements found',
+            'interactive_elements': tree_state.interactive_elements_to_string(active_app_name) or 'No interactive elements found',
+            'scrollable_elements': tree_state.scrollable_elements_to_string(active_app_name) or 'No scrollable elements found',
         })

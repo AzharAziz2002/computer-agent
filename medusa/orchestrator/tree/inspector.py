@@ -1,5 +1,5 @@
 from medusa.orchestrator.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES
-from medusa.uia import Control,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType
+from medusa.uia import Control,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,GetForegroundWindow,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType
 from medusa.orchestrator.tree.state import TreeElementNode, ScrollElementNode, TextElementNode, Center, BoundingBox, TreeState
 from medusa.orchestrator.tree.utils import random_point_within_bounding_box
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,20 +41,32 @@ class Tree:
         active_handle = active_app.handle if active_app else None
         active_is_browser = active_app.is_browser if active_app else False
 
+        # Fallback: if no app matched, include the actual foreground window (e.g. popup dialogs)
+        if not active_handle:
+            fg_handle = GetForegroundWindow()
+            if fg_handle:
+                active_handle = fg_handle
+
         targets = []
         for child in root.GetChildren():
+            class_name = child.ClassName
             if self.desktop.is_overlay_app(child):
+                logger.info(f"Skipped overlay: ClassName={class_name}, Name={child.Name!r}")
                 continue
             handle = child.NativeWindowHandle
-            class_name = child.ClassName
             if active_handle and handle == active_handle:
                 targets.append((child, active_is_browser))
             elif class_name in self.SYSTEM_CLASSES:
                 targets.append((child, False))
-            elif not active_app and class_name == 'Progman':
+            elif not active_handle and class_name == 'Progman':
                 targets.append((child, False))
+        logger.info(f"Targets: {[(c.ClassName, c.Name) for c, _ in targets]}")
 
         interactive_nodes,scrollable_nodes,dom_informative_nodes=self.get_appwise_nodes(targets)
+        # Reorder: foreground elements first so IDs match display order
+        active_app_name = active_app.name if active_app else ''
+        interactive_nodes.sort(key=lambda n: 0 if n.app_name == active_app_name else 1)
+        scrollable_nodes.sort(key=lambda n: 0 if n.app_name == active_app_name else 1)
         root_node=TreeElementNode(
             name="Desktop",
             runtime_id=(),
@@ -324,7 +336,7 @@ class Tree:
                     dom_interactive_nodes:Optional[list[TreeElementNode]]=None, dom_informative_nodes:Optional[list[TextElementNode]]=None,
                     is_dom:bool=False, is_dialog:bool=False):
         # Checks to skip the nodes that are not interactive
-        if node.IsOffscreen and (node.ControlTypeName not in set(["GroupControl","EditControl","TitleBarControl"])) and node.ClassName not in set(["Popup","Windows.UI.Core.CoreComponentInputSource"]):
+        if node.IsOffscreen and (node.ControlTypeName not in set(["GroupControl","EditControl","TitleBarControl"])) and node.ClassName not in set(["Popup","Windows.UI.Core.CoreComponentInputSource","Shell_TrayWnd","Shell_SecondaryTrayWnd"]):
             return None
         
         if scrollable_nodes is not None and self.is_element_scrollable(node):
@@ -362,7 +374,7 @@ class Tree:
             cursor_type=AccessibleRoleNames.get(legacy_pattern.Role, "Default")
             runtime_id=node.GetRuntimeId()
             is_focused=node.HasKeyboardFocus
-            name=node.Name.strip()
+            name=' '.join(node.Name.split())
             element_bounding_box = node.BoundingRectangle
             if is_browser and is_dom:
                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
@@ -449,14 +461,14 @@ class Tree:
     
     def get_nodes(self, node: Control, is_browser:bool=False) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
         window_bounding_box=node.BoundingRectangle
-        
+
         interactive_nodes, dom_interactive_nodes, dom_informative_nodes, scrollable_nodes = [], [], [], []
         app_name=node.Name.strip()
         app_name=self.app_name_correction(app_name)
+        logger.info(f'get_nodes: app={app_name}, ClassName={node.ClassName}, IsOffscreen={node.IsOffscreen}, BoundingRect={window_bounding_box}, ChildCount={len(node.GetChildren())}')
 
         self.tree_traversal(node, window_bounding_box, app_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=False, is_dialog=False)
-        logger.debug(f'App name:{app_name}')
-        logger.debug(f'Interactive nodes:{len(interactive_nodes)}')
+        logger.info(f'get_nodes result: app={app_name}, interactive={len(interactive_nodes)}, scrollable={len(scrollable_nodes)}')
         if is_browser:
             logger.debug(f'DOM interactive nodes:{len(dom_interactive_nodes)}')
             logger.debug(f'DOM informative nodes:{len(dom_informative_nodes)}')
@@ -648,7 +660,6 @@ class Tree:
             draw.rectangle([(label_x1, label_y1), (label_x2, label_y2)], fill=color)
             draw.text((label_x1 + 2, label_y1 + 2), str(label), fill=(255, 255, 255), font=font)
 
-        # Draw annotations in parallel
-        with ThreadPoolExecutor() as executor:
-            executor.map(draw_annotation, range(len(nodes)), nodes)
+        for label, node in enumerate(nodes):
+            draw_annotation(label, node)
         return padded_screenshot

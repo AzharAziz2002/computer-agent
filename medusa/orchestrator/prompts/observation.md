@@ -7,7 +7,7 @@
     {apps}
     [End of App Info]
 
-    [Begin of Screen]
+    [Begin of Screen — foreground app]
     List of Interactive Elements:
     {interactive_elements}
 
