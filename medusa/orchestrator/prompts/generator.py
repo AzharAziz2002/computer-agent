@@ -6,13 +6,14 @@ from getpass import getuser
 from pathlib import Path
 import pyautogui as pg
 
+INCLUDE_SOUL = False
+
 class Prompt:
     @staticmethod
     def system_prompt(desktop:Desktop,browser: Browser,language: str,instructions: list[str]=[]) -> str:
         """Build system prompt (tools are now passed via API, not in prompt)."""
         width, height = pg.size()
-        template = Path(files('medusa.orchestrator.prompts').joinpath('system.md')).read_text(encoding='utf-8')
-        return template.format(**{
+        format_vars = {
             'datetime': datetime.now().strftime('%A, %B %d, %Y'),
             'instructions': '\n'.join(instructions),
             'download_directory': Path.home().joinpath('Downloads').as_posix(),
@@ -22,7 +23,14 @@ class Prompt:
             'home_dir': Path.home().as_posix(),
             'user': f"{getuser()} ({desktop.get_user_account_type()})",
             'resolution': f'Primary Monitor ({width}x{height}) with DPI Scale: {desktop.get_dpi_scaling()}',
-        })
+        }
+        parts = []
+        if INCLUDE_SOUL:
+            soul = Path(files('medusa.orchestrator.prompts').joinpath('soul.md')).read_text(encoding='utf-8')
+            parts.append(soul.format(**format_vars))
+        template = Path(files('medusa.orchestrator.prompts').joinpath('system.md')).read_text(encoding='utf-8')
+        parts.append(template.format(**format_vars))
+        return '\n\n'.join(parts)
 
     @staticmethod
     def screenshot_observation(desktop_state: DesktopState) -> str:

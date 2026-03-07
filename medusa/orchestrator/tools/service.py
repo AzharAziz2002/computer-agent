@@ -6,6 +6,7 @@ from medusa.orchestrator.desktop.controller import Desktop
 from typing import Literal,Optional
 from medusa.tool import Tool
 from pathlib import Path
+from PIL import Image
 from time import sleep
 
 memory_path=Path.cwd()/'.memories'
@@ -259,13 +260,12 @@ def desktop_tool(action:str,**kwargs)->str:
 
         case 'screenshot':
             mode=kwargs.get('mode','inspect')
-            desktop_state=desktop.get_state(use_vision=(mode=='image'))
             if mode=='image':
-                return ToolResult(is_success=True,content="Screenshot captured.",image=desktop_state.screenshot)
-          
-            else:
-                observation=Prompt.screenshot_observation(desktop_state)
-                return ToolResult(is_success=True,content=observation)
+                img = desktop.get_screenshot().resize((1024, 576), Image.LANCZOS)
+                return ToolResult(is_success=True,content="Screenshot captured.",image=img)
+            desktop_state=desktop.get_state(use_vision=False)
+            observation=Prompt.screenshot_observation(desktop_state)
+            return ToolResult(is_success=True,content=observation)
 
 @Tool('Scrape Tool',args_schema=Scrape)
 def scrape_tool(url:str,**kwargs)->str:

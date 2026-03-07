@@ -187,7 +187,7 @@ class ChatAnthropic(BaseChatLLM):
             params["temperature"] = self.temperature
         if tools:
             params["tools"] = self._format_tools(tools)
-            params["tool_choice"] = {"type": "any"}
+            params["tool_choice"] = {"type": "auto"}
         completion = self.client.messages.create(**params)
         if not isinstance(completion,Message):
             raise ValueError("Unexpected response type from Anthropic API")

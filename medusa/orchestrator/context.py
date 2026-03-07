@@ -37,20 +37,22 @@ class ContextManager:
         if len(self._turns) > self.block_limit:
             self._turns = self._turns[-self.block_limit:]
 
-        # 2. Expire screenshots older than screenshot_limit turns.
+        # 2. Remove screenshot pairs (ToolCall + ToolResult) older than screenshot_limit turns.
         #    age = how many turns ago (0 = current, 1 = previous, ...).
-        #    Expire when age >= screenshot_limit.
         last_turn_idx = len(self._turns) - 1
         for ti, turn in enumerate(self._turns):
             age = last_turn_idx - ti
             if age >= self.screenshot_limit:
-                for mi, msg in enumerate(turn):
-                    if self._is_screenshot(msg):
-                        self._turns[ti][mi] = ToolResultMessage(
-                            content="[screenshot expired]",
-                            tool_call_id=msg.tool_call_id,
-                            tool_name=msg.tool_name,
-                        )
+                expired_ids = {msg.tool_call_id for msg in turn if self._is_screenshot(msg)}
+                if expired_ids:
+                    self._turns[ti] = [
+                        msg for msg in turn
+                        if not (self._is_screenshot(msg) or
+                                (isinstance(msg, ToolCallMessage) and msg.tool_call_id in expired_ids))
+                    ]
+
+        # 3. Drop turns that became fully empty after screenshot removal
+        self._turns = [turn for turn in self._turns if turn]
 
     def _is_screenshot(self, msg) -> bool:
         """Check if a message is a screenshot ToolResultMessage."""

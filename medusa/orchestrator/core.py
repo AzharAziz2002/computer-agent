@@ -1,5 +1,4 @@
-from medusa.orchestrator.tools.service import (desktop_tool, shell_tool, done_tool, memory_tool,
-app_tool, scrape_tool)
+from medusa.orchestrator.tools.service import desktop_tool, shell_tool, done_tool, app_tool
 from medusa.messages import SystemMessage, HumanMessage, AIMessage, ToolCallMessage, ToolResultMessage
 from medusa.telemetry.views import AgentTelemetryEvent
 from medusa.telemetry.tracker import ProductTelemetry
@@ -22,7 +21,6 @@ class Agent:
         self.description = 'An agent that can interact with GUI elements on Windows OS'
         self.registry = Registry([
             desktop_tool, app_tool, shell_tool, done_tool,
-            memory_tool, scrape_tool
         ])
         self.instructions = instructions
         self.browser = browser

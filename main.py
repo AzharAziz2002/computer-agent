@@ -15,7 +15,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     llm = ChatAnthropic(
-        model="claude-haiku-4-5-20251001",
+        model="claude-sonnet-4-6",
         api_key=os.getenv("CLAUDE_API_KEY"),
         thinking_budget=-1,
     )
@@ -36,3 +36,4 @@ if __name__ == "__main__":
 
 #     print("\n=== Final Result ===")
 #     print(result)
+# claude-haiku-4-5-20251001
