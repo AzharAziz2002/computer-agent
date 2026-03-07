@@ -1,18 +1,20 @@
 import random
-from medusa.uia import Control
+from medusa.uia import Control, Rect
 
-def random_point_within_bounding_box(node: Control, scale_factor: float = 1.0) -> tuple[int, int]:
+def random_point_within_bounding_box(node: Control = None, box: Rect = None, scale_factor: float = 1.0) -> tuple[int, int]:
     """
     Generate a random point within a scaled-down bounding box.
 
     Args:
-        node (Control): The node with a bounding rectangle
+        node (Control): The node with a bounding rectangle (optional if box provided)
+        box (Rect): Pre-fetched bounding rectangle (avoids COM call if provided)
         scale_factor (float, optional): The factor to scale down the bounding box. Defaults to 1.0.
 
     Returns:
         tuple: A random point (x, y) within the scaled-down bounding box
     """
-    box = node.BoundingRectangle
+    if box is None:
+        box = node.BoundingRectangle
     scaled_width = int(box.width() * scale_factor)
     scaled_height = int(box.height() * scale_factor)
     scaled_left = box.left + (box.width() - scaled_width) // 2

@@ -1,5 +1,8 @@
-from medusa.orchestrator.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES
-from medusa.uia import Control,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,GetForegroundWindow,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType
+from medusa.orchestrator.tree.config import (INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES,
+    DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES,
+    SCROLLABLE_EXCLUSION_TYPES, INTERACTIVE_AND_DOCUMENT_TYPES, KEYBOARD_FOCUSABLE_TYPE_OVERRIDES,
+    OFFSCREEN_EXCEPTION_TYPES, OFFSCREEN_EXCEPTION_CLASSES, BROWSER_SKIP_TYPES)
+from medusa.uia import Control,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,GetForegroundWindow,ControlFromHandle,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType
 from medusa.orchestrator.tree.state import TreeElementNode, ScrollElementNode, TextElementNode, Center, BoundingBox, TreeState
 from medusa.orchestrator.tree.utils import random_point_within_bounding_box
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,33 +39,76 @@ class Tree:
 
     SYSTEM_CLASSES = {'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Microsoft.UI.Content.PopupWindowSiteBridge'}
 
-    def get_state(self,active_app:App)->TreeState:
-        root=GetRootControl()
+    def get_state(self,active_app:App, root_children:list=None, app_handles:set=None)->TreeState:
+        if root_children is None:
+            root=GetRootControl()
+            root_children=root.GetChildren()
+
+        if app_handles is None:
+            app_handles = set()
+
         active_handle = active_app.handle if active_app else None
         active_is_browser = active_app.is_browser if active_app else False
+        fg_control = None
 
         # Fallback: if no app matched, include the actual foreground window (e.g. popup dialogs)
         if not active_handle:
             fg_handle = GetForegroundWindow()
             if fg_handle:
                 active_handle = fg_handle
+                try:
+                    fg_control = ControlFromHandle(fg_handle)
+                except Exception:
+                    fg_control = None
 
         targets = []
-        for child in root.GetChildren():
+        active_target = None
+        popup_targets = []
+        progman_child = None
+        for child in root_children:
             class_name = child.ClassName
-            if self.desktop.is_overlay_app(child):
-                logger.info(f"Skipped overlay: ClassName={class_name}, Name={child.Name!r}")
-                continue
             handle = child.NativeWindowHandle
-            if active_handle and handle == active_handle:
-                targets.append((child, active_is_browser))
+            is_active = bool(active_handle and handle == active_handle)
+            if not is_active and self.desktop.is_overlay_app(child):
+                continue
+            if is_active:
+                active_target = (child, active_is_browser)
+                targets.append(active_target)
             elif class_name in self.SYSTEM_CLASSES:
                 targets.append((child, False))
-            elif not active_handle and class_name == 'Progman':
+            elif class_name == 'Progman':
+                progman_child = child
+            elif handle not in app_handles:
+                # Non-app popup window (Start Menu, Widgets, Search, etc.)
                 targets.append((child, False))
-        logger.info(f"Targets: {[(c.ClassName, c.Name) for c, _ in targets]}")
+                popup_targets.append(child)
+
+        # Foreground window not in root children — traverse it directly
+        # (e.g. Start Menu's Search flyout is a separate HWND not in root children)
+        if active_target is None and fg_control is not None:
+            targets.append((fg_control, False))
+            popup_targets.append(fg_control)
+
+        # Include desktop icons (Progman) when no active app and no popup overlays
+        # (desktop is visible and interactable only when nothing covers it)
+        if active_app is None and progman_child is not None and not popup_targets:
+            targets.append((progman_child, False))
+
+        # Large popup covering the screen? Remove the active app — its elements
+        # are behind the overlay and not clickable (e.g. Widgets over VS Code)
+        if active_target is not None and popup_targets:
+            screen_area = self.screen_size.width * self.screen_size.height
+            for popup in popup_targets:
+                try:
+                    box = popup.BoundingRectangle
+                    if box.width() * box.height() > screen_area * 0.10:
+                        targets.remove(active_target)
+                        break
+                except Exception:
+                    pass
 
         interactive_nodes,scrollable_nodes,dom_informative_nodes=self.get_appwise_nodes(targets)
+
         # Reorder: foreground elements first so IDs match display order
         active_app_name = active_app.name if active_app else ''
         interactive_nodes.sort(key=lambda n: 0 if n.app_name == active_app_name else 1)
@@ -164,110 +210,140 @@ class Tree:
             )
         return bounding_box
 
-    def is_element_visible(self, node:Control, threshold:int=0):
+    def is_element_visible(self, node:Control, is_offscreen:bool=None, control_type_name:str=None, threshold:int=0):
         is_control=node.IsControlElement
         box=node.BoundingRectangle
         if box.isempty():
             return False
-        width=box.width()
-        height=box.height()
-        area=width*height
-        is_offscreen=(not node.IsOffscreen) or node.ControlTypeName in ['EditControl']
-        return area > threshold and is_offscreen and is_control
-    
+        area=box.width()*box.height()
+        if is_offscreen is None:
+            is_offscreen=node.IsOffscreen
+        if control_type_name is None:
+            control_type_name=node.ControlTypeName
+        passes_offscreen=(not is_offscreen) or control_type_name=='EditControl'
+        return area > threshold and passes_offscreen and is_control
+
     def is_element_enabled(self, node: Control):
         try:
             return node.IsEnabled
         except Exception:
             return False
-        
-    def is_element_role_interactive(self, node: Control):
-        legacy_pattern=node.GetLegacyIAccessiblePattern()
-        try:
-            return AccessibleRoleNames.get(legacy_pattern.Role, "Default") in INTERACTIVE_ROLES
-        except Exception:
-            return False
-            
-    def is_default_action(self, node:Control):
-        legacy_pattern=node.GetLegacyIAccessiblePattern()
+
+    def is_default_action_from_pattern(self, legacy_pattern):
+        """Check default action using an already-retrieved legacy pattern."""
         default_action=legacy_pattern.DefaultAction.title()
-        if default_action in DEFAULT_ACTIONS:
-            return True
-        return False
-        
+        return default_action in DEFAULT_ACTIONS
+
     def is_element_image(self, node:Control):
         if isinstance(node,ImageControl):
             if node.LocalizedControlType=='graphic' or not node.IsKeyboardFocusable:
                 return True
         return False
-        
-    def is_element_text(self, node:Control):
+
+    def is_element_text(self, node:Control, control_type_name:str=None, is_offscreen:bool=None):
         try:
-            if node.ControlTypeName in INFORMATIVE_CONTROL_TYPE_NAMES:
-                if self.is_element_visible(node) and self.is_element_enabled(node) and not self.is_element_image(node):
+            if control_type_name is None:
+                control_type_name=node.ControlTypeName
+            if control_type_name in INFORMATIVE_CONTROL_TYPE_NAMES:
+                if self.is_element_visible(node, is_offscreen=is_offscreen, control_type_name=control_type_name) and self.is_element_enabled(node) and not self.is_element_image(node):
                     return True
         except Exception:
             return False
         return False
-            
+
     def is_window_modal(self, node:WindowControl):
         try:
             window_pattern=node.GetWindowPattern()
             return window_pattern.IsModal
         except Exception:
             return False
-            
-    def is_keyboard_focusable(self, node:Control):
+
+    def is_keyboard_focusable(self, node:Control, control_type_name:str=None):
         try:
-            if node.ControlTypeName in set(['EditControl','ButtonControl','CheckBoxControl','RadioButtonControl','TabItemControl']):
+            if control_type_name is None:
+                control_type_name=node.ControlTypeName
+            if control_type_name in KEYBOARD_FOCUSABLE_TYPE_OVERRIDES:
                 return True
             return node.IsKeyboardFocusable
         except Exception:
             return False
-            
+
     def element_has_child_element(self, node:Control,control_type:str,child_control_type:str):
         if node.LocalizedControlType==control_type:
             first_child=node.GetFirstChildControl()
             if first_child is None:
                 return False
             return first_child.LocalizedControlType==child_control_type
-            
-    def group_has_no_name(self, node:Control):
+
+    def group_has_no_name(self, node:Control, control_type_name:str=None):
         try:
-            if node.ControlTypeName=='GroupControl':
+            if control_type_name is None:
+                control_type_name=node.ControlTypeName
+            if control_type_name=='GroupControl':
                 if not node.Name.strip():
                     return True
             return False
         except Exception:
             return False
-            
-    def is_element_scrollable(self, node:Control):
+
+    def is_element_scrollable(self, node:Control, control_type_name:str=None, is_offscreen:bool=None):
+        """Returns (is_scrollable, scroll_pattern_or_None)."""
         try:
-            if (node.ControlTypeName in INTERACTIVE_CONTROL_TYPE_NAMES|INFORMATIVE_CONTROL_TYPE_NAMES) or node.IsOffscreen:
-                return False
+            if control_type_name is None:
+                control_type_name=node.ControlTypeName
+            if is_offscreen is None:
+                is_offscreen=node.IsOffscreen
+            if (control_type_name in SCROLLABLE_EXCLUSION_TYPES) or is_offscreen:
+                return (False, None)
             scroll_pattern:ScrollPattern=node.GetPattern(PatternId.ScrollPattern)
             if scroll_pattern is None:
-                return False
-            return scroll_pattern.VerticallyScrollable
+                return (False, None)
+            if scroll_pattern.VerticallyScrollable:
+                return (True, scroll_pattern)
+            return (False, None)
         except Exception:
-            return False
-            
-    def is_element_interactive(self, node:Control, is_browser:bool):
+            return (False, None)
+
+    def is_element_interactive(self, node:Control, is_browser:bool, control_type_name:str=None, is_offscreen:bool=None):
+        """Returns (is_interactive, legacy_pattern_or_None)."""
         try:
-            if is_browser and node.ControlTypeName in set(['DataItemControl','ListItemControl']) and not self.is_keyboard_focusable(node):
-                return False
-            elif not is_browser and node.ControlTypeName=="ImageControl" and self.is_keyboard_focusable(node):
-                return True
-            elif node.ControlTypeName in INTERACTIVE_CONTROL_TYPE_NAMES|DOCUMENT_CONTROL_TYPE_NAMES:
-                return self.is_element_visible(node) and self.is_element_enabled(node) and self.is_element_role_interactive(node) and (not self.is_element_image(node) or self.is_keyboard_focusable(node))
-            elif node.ControlTypeName=='GroupControl':
+            if control_type_name is None:
+                control_type_name=node.ControlTypeName
+            if is_browser and control_type_name in BROWSER_SKIP_TYPES:
+                if not self.is_keyboard_focusable(node, control_type_name):
+                    return (False, None)
+            elif not is_browser and control_type_name=="ImageControl":
+                if self.is_keyboard_focusable(node, control_type_name):
+                    return (True, None)
+            if control_type_name in INTERACTIVE_AND_DOCUMENT_TYPES:
+                if not (self.is_element_visible(node, is_offscreen=is_offscreen, control_type_name=control_type_name) and self.is_element_enabled(node)):
+                    return (False, None)
+                legacy_pattern=node.GetLegacyIAccessiblePattern()
+                try:
+                    role_name=AccessibleRoleNames.get(legacy_pattern.Role, "Default")
+                except Exception:
+                    return (False, None)
+                if role_name not in INTERACTIVE_ROLES:
+                    return (False, None)
+                if not (not self.is_element_image(node) or self.is_keyboard_focusable(node, control_type_name)):
+                    return (False, None)
+                return (True, legacy_pattern)
+            elif control_type_name=='GroupControl':
                 if is_browser:
-                    return self.is_element_visible(node) and self.is_element_enabled(node) and self.is_element_role_interactive(node) and (self.is_default_action(node) or self.is_keyboard_focusable(node))
-                    # else:
-                    #     return is_element_visible(node) and is_element_enabled(node) and is_default_action(node)
+                    if not (self.is_element_visible(node, is_offscreen=is_offscreen, control_type_name=control_type_name) and self.is_element_enabled(node)):
+                        return (False, None)
+                    legacy_pattern=node.GetLegacyIAccessiblePattern()
+                    try:
+                        role_name=AccessibleRoleNames.get(legacy_pattern.Role, "Default")
+                    except Exception:
+                        return (False, None)
+                    if role_name not in INTERACTIVE_ROLES:
+                        return (False, None)
+                    if self.is_default_action_from_pattern(legacy_pattern) or self.is_keyboard_focusable(node, control_type_name):
+                        return (True, legacy_pattern)
         except Exception:
-            return False
-        return False
+            return (False, None)
+        return (False, None)
 
     def _dom_correction(self, node:Control, dom_interactive_nodes:list[TreeElementNode], app_name:str):
         if self.element_has_child_element(node,'list item','link') or self.element_has_child_element(node,'item','link'):
@@ -331,90 +407,100 @@ class Tree:
                 'is_focused':is_focused
             }))
 
-    def tree_traversal(self, node: Control, window_bounding_box:Rect, app_name:str, is_browser:bool, 
-                    interactive_nodes:Optional[list[TreeElementNode]]=None, scrollable_nodes:Optional[list[ScrollElementNode]]=None, 
+    def tree_traversal(self, node: Control, window_bounding_box:Rect, app_name:str, is_browser:bool,
+                    interactive_nodes:Optional[list[TreeElementNode]]=None, scrollable_nodes:Optional[list[ScrollElementNode]]=None,
                     dom_interactive_nodes:Optional[list[TreeElementNode]]=None, dom_informative_nodes:Optional[list[TextElementNode]]=None,
                     is_dom:bool=False, is_dialog:bool=False):
-        # Checks to skip the nodes that are not interactive
-        if node.IsOffscreen and (node.ControlTypeName not in set(["GroupControl","EditControl","TitleBarControl"])) and node.ClassName not in set(["Popup","Windows.UI.Core.CoreComponentInputSource","Shell_TrayWnd","Shell_SecondaryTrayWnd"]):
+        # Cache frequently-accessed COM properties (each read is a cross-process COM call)
+        control_type_name = node.ControlTypeName
+        is_offscreen = node.IsOffscreen
+        if is_offscreen and (control_type_name not in OFFSCREEN_EXCEPTION_TYPES) and node.ClassName not in OFFSCREEN_EXCEPTION_CLASSES:
             return None
-        
-        if scrollable_nodes is not None and self.is_element_scrollable(node):
-            scroll_pattern:ScrollPattern=node.GetPattern(PatternId.ScrollPattern)
-            runtime_id=node.GetRuntimeId()
-            box = node.BoundingRectangle
-            # Get the center
-            x,y=random_point_within_bounding_box(node=node,scale_factor=0.8)
-            center = Center(x=x,y=y)
-            scrollable_nodes.append(ScrollElementNode(**{
-                'name':node.Name.strip() or node.AutomationId or node.LocalizedControlType.capitalize() or "''",
-                'runtime_id':tuple(runtime_id),
-                'control_type':node.LocalizedControlType.title(),
-                'bounding_box':BoundingBox(**{
-                    'left':box.left,
-                    'top':box.top,
-                    'right':box.right,
-                    'bottom':box.bottom,
-                    'width':box.width(),
-                    'height':box.height()
-                }),
-                'center':center,
-                'xpath':'',
-                'horizontal_scrollable':scroll_pattern.HorizontallyScrollable,
-                'horizontal_scroll_percent':scroll_pattern.HorizontalScrollPercent if scroll_pattern.HorizontallyScrollable else 0,
-                'vertical_scrollable':scroll_pattern.VerticallyScrollable,
-                'vertical_scroll_percent':scroll_pattern.VerticalScrollPercent if scroll_pattern.VerticallyScrollable else 0,
-                'app_name':app_name,
-                'is_focused':node.HasKeyboardFocus
-            }))
-                
-        if interactive_nodes is not None and self.is_element_interactive(node, is_browser):
-            legacy_pattern=node.GetLegacyIAccessiblePattern()
-            value=legacy_pattern.Value.strip() if legacy_pattern.Value is not None else ""
-            cursor_type=AccessibleRoleNames.get(legacy_pattern.Role, "Default")
-            runtime_id=node.GetRuntimeId()
-            is_focused=node.HasKeyboardFocus
-            name=' '.join(node.Name.split())
-            element_bounding_box = node.BoundingRectangle
-            if is_browser and is_dom:
-                bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
-                center = bounding_box.get_center()
-                tree_node=TreeElementNode(**{
-                    'name':name,
+
+        if scrollable_nodes is not None:
+            _is_scrollable, _scroll_pattern = self.is_element_scrollable(node, control_type_name=control_type_name, is_offscreen=is_offscreen)
+            if _is_scrollable:
+                runtime_id=node.GetRuntimeId()
+                box = node.BoundingRectangle
+                x,y=random_point_within_bounding_box(box=box,scale_factor=0.8)
+                center = Center(x=x,y=y)
+                scrollable_nodes.append(ScrollElementNode(**{
+                    'name':node.Name.strip() or node.AutomationId or node.LocalizedControlType.capitalize() or "''",
                     'runtime_id':tuple(runtime_id),
                     'control_type':node.LocalizedControlType.title(),
-                    'value':value,
-                    'shortcut':node.AcceleratorKey,
-                    'bounding_box':bounding_box,
+                    'bounding_box':BoundingBox(**{
+                        'left':box.left,
+                        'top':box.top,
+                        'right':box.right,
+                        'bottom':box.bottom,
+                        'width':box.width(),
+                        'height':box.height()
+                    }),
                     'center':center,
                     'xpath':'',
+                    'horizontal_scrollable':_scroll_pattern.HorizontallyScrollable,
+                    'horizontal_scroll_percent':_scroll_pattern.HorizontalScrollPercent if _scroll_pattern.HorizontallyScrollable else 0,
+                    'vertical_scrollable':_scroll_pattern.VerticallyScrollable,
+                    'vertical_scroll_percent':_scroll_pattern.VerticalScrollPercent if _scroll_pattern.VerticallyScrollable else 0,
                     'app_name':app_name,
-                    'is_focused':is_focused
-                })
-                dom_interactive_nodes.append(tree_node)
-                self._dom_correction(node, dom_interactive_nodes, app_name)
-            else:
-                bounding_box=self.iou_bounding_box(window_bounding_box,element_bounding_box)
-                center = bounding_box.get_center()
-                tree_node=TreeElementNode(**{
-                    'name':name,
-                    'runtime_id':tuple(runtime_id),
-                    'cursor_type':cursor_type.title(),
-                    'control_type':node.LocalizedControlType.title(),
-                    'value':value,
-                    'shortcut':node.AcceleratorKey,
-                    'bounding_box':bounding_box,
-                    'center':center,
-                    'xpath':'',
-                    'app_name':app_name,
-                    'is_focused':is_focused
-                })
-                interactive_nodes.append(tree_node)
-        if dom_informative_nodes is not None and self.is_element_text(node):
-            if is_browser and is_dom:
-                dom_informative_nodes.append(TextElementNode(
-                    text=node.Name.strip(),
-                ))
+                    'is_focused':node.HasKeyboardFocus
+                }))
+
+        if interactive_nodes is not None:
+            _is_interactive, _legacy_pattern = self.is_element_interactive(node, is_browser, control_type_name=control_type_name, is_offscreen=is_offscreen)
+            if _is_interactive:
+                # Reuse legacy_pattern from is_element_interactive when available
+                if _legacy_pattern is None:
+                    _legacy_pattern=node.GetLegacyIAccessiblePattern()
+                value=_legacy_pattern.Value.strip() if _legacy_pattern.Value is not None else ""
+                cursor_type=AccessibleRoleNames.get(_legacy_pattern.Role, "Default")
+                runtime_id=node.GetRuntimeId()
+                is_focused=node.HasKeyboardFocus
+                name=' '.join(node.Name.split())
+                element_bounding_box = node.BoundingRectangle
+                if is_browser and is_dom:
+                    bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
+                    center = bounding_box.get_center()
+                    tree_node=TreeElementNode(**{
+                        'name':name,
+                        'runtime_id':tuple(runtime_id),
+                        'control_type':node.LocalizedControlType.title(),
+                        'value':value,
+                        'shortcut':node.AcceleratorKey,
+                        'bounding_box':bounding_box,
+                        'center':center,
+                        'xpath':'',
+                        'app_name':app_name,
+                        'is_focused':is_focused
+                    })
+                    dom_interactive_nodes.append(tree_node)
+                    self._dom_correction(node, dom_interactive_nodes, app_name)
+                else:
+                    bounding_box=self.iou_bounding_box(window_bounding_box,element_bounding_box)
+                    center = bounding_box.get_center()
+                    tree_node=TreeElementNode(**{
+                        'name':name,
+                        'runtime_id':tuple(runtime_id),
+                        'cursor_type':cursor_type.title(),
+                        'control_type':node.LocalizedControlType.title(),
+                        'value':value,
+                        'shortcut':node.AcceleratorKey,
+                        'bounding_box':bounding_box,
+                        'center':center,
+                        'xpath':'',
+                        'app_name':app_name,
+                        'is_focused':is_focused
+                    })
+                    interactive_nodes.append(tree_node)
+
+        if dom_informative_nodes is not None:
+            _is_text = self.is_element_text(node, control_type_name=control_type_name, is_offscreen=is_offscreen)
+            if _is_text:
+                if is_browser and is_dom:
+                    dom_informative_nodes.append(TextElementNode(
+                        text=node.Name.strip(),
+                    ))
+
         children=node.GetChildren()
 
         # Recursively traverse the tree the right to left for normal apps and for DOM traverse from left to right
@@ -448,7 +534,7 @@ class Tree:
                 # normal non-dialog children
                 self.tree_traversal(child, window_bounding_box, app_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=is_dom, is_dialog=is_dialog)
 
-    def app_name_correction(self,app_name:str)->str:
+    def app_name_correction(self,app_name:str,class_name:str="")->str:
         match app_name:
             case "Progman":
                 return "Desktop"
@@ -457,6 +543,8 @@ class Tree:
             case 'Microsoft.UI.Content.PopupWindowSiteBridge':
                 return "Context Menu"
             case _:
+                if not app_name and class_name:
+                    return class_name
                 return app_name
     
     def get_nodes(self, node: Control, is_browser:bool=False) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
@@ -464,11 +552,12 @@ class Tree:
 
         interactive_nodes, dom_interactive_nodes, dom_informative_nodes, scrollable_nodes = [], [], [], []
         app_name=node.Name.strip()
-        app_name=self.app_name_correction(app_name)
-        logger.info(f'get_nodes: app={app_name}, ClassName={node.ClassName}, IsOffscreen={node.IsOffscreen}, BoundingRect={window_bounding_box}, ChildCount={len(node.GetChildren())}')
+        app_name=self.app_name_correction(app_name,class_name=node.ClassName)
 
         self.tree_traversal(node, window_bounding_box, app_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=False, is_dialog=False)
-        logger.info(f'get_nodes result: app={app_name}, interactive={len(interactive_nodes)}, scrollable={len(scrollable_nodes)}')
+
+        logger.debug(f'App name:{app_name}')
+        logger.debug(f'Interactive nodes:{len(interactive_nodes)}')
         if is_browser:
             logger.debug(f'DOM interactive nodes:{len(dom_interactive_nodes)}')
             logger.debug(f'DOM informative nodes:{len(dom_informative_nodes)}')
@@ -477,7 +566,7 @@ class Tree:
         interactive_nodes.extend(dom_interactive_nodes)
         return (interactive_nodes,scrollable_nodes,dom_informative_nodes)
 
-    def _on_focus_change(self, sender:'ctypes.POINTER(IUIAutomationElement)'):
+    def _on_focus_change(self, sender):
         """Handle focus change events."""
         # Debounce duplicate events
         current_time = time.time()
@@ -495,7 +584,7 @@ class Tree:
         except Exception:
             pass
 
-    def _on_structure_change(self, sender:'ctypes.POINTER(IUIAutomationElement)', changeType:int, runtime_id:list[int]):
+    def _on_structure_change(self, sender, changeType:int, runtime_id:list[int]):
         """Handle structure change events."""
         try:
             # Debounce duplicate events
@@ -521,11 +610,13 @@ class Tree:
                         self.tree_traversal(node,window_bounding_box,app_name,is_browser,interactive_nodes=interactive_nodes)
                     else:
                         #If element is interactive take it else skip it
-                        if not self.is_element_interactive(node=node,is_browser=is_browser):
+                        _is_interactive, _legacy_pattern = self.is_element_interactive(node=node,is_browser=is_browser)
+                        if not _is_interactive:
                             return None
-                        legacy_pattern=node.GetLegacyIAccessiblePattern()
-                        value=legacy_pattern.Value.strip() if legacy_pattern.Value is not None else ""
-                        cursor_type=AccessibleRoleNames.get(legacy_pattern.Role, "Default")
+                        if _legacy_pattern is None:
+                            _legacy_pattern=node.GetLegacyIAccessiblePattern()
+                        value=_legacy_pattern.Value.strip() if _legacy_pattern.Value is not None else ""
+                        cursor_type=AccessibleRoleNames.get(_legacy_pattern.Role, "Default")
                         runtime_id=node.GetRuntimeId()
                         is_focused=node.HasKeyboardFocus
                         name=node.Name.strip()
@@ -603,7 +694,7 @@ class Tree:
         except Exception:
             pass
 
-    def _on_property_change(self, sender:'ctypes.POINTER(IUIAutomationElement)', propertyId:int, newValue):
+    def _on_property_change(self, sender, propertyId:int, newValue):
         """Handle property change events."""
         try:
             element = Control.CreateControlFromElement(sender)

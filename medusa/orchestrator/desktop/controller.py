@@ -49,17 +49,29 @@ class Desktop:
         
     def get_state(self,use_vision:bool=False)->DesktopState:
         sleep(0.1)
-        apps=self.get_apps()
+
+        # Enumerate root children ONCE — shared by get_apps and tree.get_state
+        root = uia.GetRootControl()
+        root_children = root.GetChildren()
+
+        apps=self._get_apps_from_children(root_children)
+
         active_app=self.get_active_app(apps)
         if active_app is not None and (active_app in apps):
             apps.remove(active_app)
+
         logger.debug(f"Active app: {active_app}")
         logger.debug(f"Apps: {apps}")
-        tree_state=self.tree.get_state(active_app)
+        app_handles = {a.handle for a in apps}
+        if active_app is not None:
+            app_handles.add(active_app.handle)
+        tree_state=self.tree.get_state(active_app, root_children=root_children, app_handles=app_handles)
+
         if use_vision:
             screenshot=self.tree.annotated_screenshot(tree_state.interactive_nodes)
         else:
             screenshot=None
+
         self.desktop_state=DesktopState(apps= apps,active_app=active_app,screenshot=screenshot,tree_state=tree_state)
         return self.desktop_state
     
@@ -356,15 +368,14 @@ class Desktop:
         return not is_overlay and is_minimized and area>10
     
     def is_overlay_app(self,element:uia.Control) -> bool:
-        no_children = len(element.GetChildren()) == 0
+        no_children = element.GetFirstChildControl() is None
         is_name = "Overlay" in element.Name.strip()
         return no_children or is_name
         
-    def get_apps(self) -> list[App]:
+    def _get_apps_from_children(self, children: list) -> list[App]:
+        """Build App list from pre-enumerated root children."""
+        apps = []
         try:
-            desktop = uia.GetRootControl()  # Get the desktop control
-            children = desktop.GetChildren()
-            apps = []
             for depth, child in enumerate(children):
                 if isinstance(child,(uia.WindowControl,uia.PaneControl)):
                     window_pattern=child.GetPattern(uia.PatternId.WindowPattern)
@@ -395,9 +406,14 @@ class Desktop:
                             "is_browser":self.is_app_browser(child)
                         }))
         except Exception as ex:
-            logger.error(f"Error in get_apps: {ex}")
-            apps = []
+            logger.error(f"Error in _get_apps_from_children: {ex}")
         return apps
+
+    def get_apps(self) -> list[App]:
+        """Public method — enumerates root children itself."""
+        desktop = uia.GetRootControl()
+        children = desktop.GetChildren()
+        return self._get_apps_from_children(children)
     
     def get_xpath_from_element(self,element:uia.Control):
         current=element
