@@ -37,14 +37,10 @@ class ImageMessage(BaseMessage):
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
         return base64_image
     
-    def scale_image(self, scale: float=0.5) -> None:
-        size=(int(self.image.width * scale), int(self.image.height * scale))
-        self.image = self.image.resize(size=size)
-
     def image_to_bytes(self) -> bytes:
         buffered = BytesIO()
         format = self.mime_type.split("/")[-1]
-        self.image.save(buffered, format=format,quality=80)
+        self.image.save(buffered, format=format)
         return buffered.getvalue()
 
     def __repr__(self) -> str:
@@ -80,12 +76,8 @@ class ToolResultMessage(BaseMessage):
     def image_to_base64(self) -> str:
         buffered = BytesIO()
         fmt = self.mime_type.split("/")[-1]
-        self.image.save(buffered, format=fmt, quality=80)
+        self.image.save(buffered, format=fmt)
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    def scale_image(self, scale: float = 0.5) -> None:
-        size = (int(self.image.width * scale), int(self.image.height * scale))
-        self.image = self.image.resize(size=size)
 
     def __repr__(self) -> str:
         return f"ToolResultMessage(tool={self.tool_name}, content={self.content[:50]})"

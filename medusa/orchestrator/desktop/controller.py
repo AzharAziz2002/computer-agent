@@ -10,6 +10,8 @@ from rapidfuzz import process, utils
 from psutil import Process
 from time import sleep
 from PIL import Image
+import medusa.uia as uia
+import pyautogui as pg
 import win32process
 import subprocess
 import win32gui
@@ -35,17 +37,35 @@ try:
 except Exception:  
     ctypes.windll.user32.SetProcessDPIAware()  
 
-import medusa.uia as uia
-import pyautogui as pg
 
 pg.FAILSAFE=False
 pg.PAUSE=0.0
 
 class Desktop:
+    RENDER_W = 1024
+    RENDER_H = 576
+
     def __init__(self):
         self.encoding=getpreferredencoding()
         self.tree=Tree(self)
         self.desktop_state=None
+
+    def validate_loc(self, loc) -> str | None:
+        if not (isinstance(loc, (list, tuple)) and len(loc) == 2):
+            return "loc must be [x, y]"
+        x, y = loc
+        if not (isinstance(x, int) and isinstance(y, int)):
+            return f"loc values must be integers, got {loc}"
+        if x < 0 or y < 0:
+            return f"loc values must be non-negative, got {loc}"
+        if x > self.RENDER_W or y > self.RENDER_H:
+            return f"loc {loc} out of render bounds ({self.RENDER_W}x{self.RENDER_H})"
+        return None
+
+    def upscale_loc(self, loc) -> tuple[int, int]:
+        screen = self.get_screen_size()
+        x, y = loc
+        return (round(x * screen.width / self.RENDER_W), round(y * screen.height / self.RENDER_H))
         
     def get_state(self,use_vision:bool=False)->DesktopState:
         sleep(0.1)
@@ -262,9 +282,16 @@ class Desktop:
         bounding_rectangle=element_handle.BoundingRectangle
         return bounding_rectangle.xcenter(),bounding_rectangle.ycenter()
         
-    def click(self,loc:tuple[int,int],button:str='left',clicks:int=2):
-        x,y=loc
+    def click(self,loc:tuple[int,int],button:str='left',clicks:int=1,modifier:str=None):
+        err=self.validate_loc(loc)
+        if err: return err
+        x,y=self.upscale_loc(loc)
+        if modifier:
+            pg.keyDown(modifier)
         pg.click(x,y,button=button,clicks=clicks)
+        if modifier:
+            pg.keyUp(modifier)
+        sleep(0.8)
 
     def type(self,text:str,caret_position:Literal['start','end','idle']='idle',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
         # loc/leftClick removed — agent clicks the target element before calling type
@@ -279,45 +306,52 @@ class Desktop:
         if press_enter=='true':
             pg.press('enter')
 
-    def scroll(self,loc:tuple[int,int]=None,type:Literal['horizontal','vertical']='vertical',direction:Literal['up','down','left','right']='down',wheel_times:int=1)->str|None:
+    def scroll(self,loc:tuple[int,int]=None,scroll_direction:Literal['up','down','left','right']='down',wheel_times:int=1,modifier:str=None)->str|None:
         if loc:
+            err=self.validate_loc(loc)
+            if err: return err
             self.move(loc)
-        match type:
-            case 'vertical':
-                match direction:
-                    case 'up':
-                        uia.WheelUp(wheel_times)
-                    case 'down':
-                        uia.WheelDown(wheel_times)
-                    case _:
-                        return 'Invalid direction. Use "up" or "down".'
-            case 'horizontal':
-                match direction:
-                    case 'left':
-                        pg.keyDown('Shift')
-                        pg.sleep(0.02)
-                        uia.WheelUp(wheel_times)
-                        pg.sleep(0.02)
-                        pg.keyUp('Shift')
-                    case 'right':
-                        pg.keyDown('Shift')
-                        pg.sleep(0.02)
-                        uia.WheelDown(wheel_times)
-                        pg.sleep(0.02)
-                        pg.keyUp('Shift')
-                    case _:
-                        return 'Invalid direction. Use "left" or "right".'
-            case _:
-                return 'Invalid type. Use "horizontal" or "vertical".'
+        if modifier:
+            pg.keyDown(modifier)
+        try:
+            match scroll_direction:
+                case 'up':
+                    uia.WheelUp(wheel_times)
+                case 'down':
+                    uia.WheelDown(wheel_times)
+                case 'left':
+                    pg.keyDown('Shift')
+                    pg.sleep(0.02)
+                    uia.WheelUp(wheel_times)
+                    pg.sleep(0.02)
+                    pg.keyUp('Shift')
+                case 'right':
+                    pg.keyDown('Shift')
+                    pg.sleep(0.02)
+                    uia.WheelDown(wheel_times)
+                    pg.sleep(0.02)
+                    pg.keyUp('Shift')
+                case _:
+                    return 'Invalid direction. Use "up", "down", "left", or "right".'
+        finally:
+            if modifier:
+                pg.keyUp(modifier)
         return None
     
-    def drag(self,loc:tuple[int,int]):
-        x,y=loc
-        # pg.sleep(0.5)
+    def drag(self,loc:tuple[int,int],modifier:str=None):
+        err=self.validate_loc(loc)
+        if err: return err
+        x,y=self.upscale_loc(loc)
+        if modifier:
+            pg.keyDown(modifier)
         pg.dragTo(x,y,duration=0.02)
+        if modifier:
+            pg.keyUp(modifier)
 
     def move(self,loc:tuple[int,int]):
-        x,y=loc
+        err=self.validate_loc(loc)
+        if err: return err
+        x,y=self.upscale_loc(loc)
         pg.moveTo(x,y,duration=0.01)
 
     def shortcut(self,shortcut:str):
@@ -327,12 +361,21 @@ class Desktop:
         else:
             pg.press(''.join(shortcut))
 
+    def hold_key(self,key:str,duration:float):
+        pg.keyDown(key)
+        sleep(duration)
+        pg.keyUp(key)
+
     def multi_select(self,press_ctrl:Literal['true','false']='false',elements:list[tuple[int,int]|int]=[]):
         if press_ctrl=='true':
             pg.keyDown('ctrl')
         for element in elements:
             x,y=element
-            pg.click(x,y,duration=0.1)
+            err=self.validate_loc((x,y))
+            if err:
+                pg.keyUp('ctrl')
+                return err
+            self.click((x,y),button='left',clicks=1)
             pg.sleep(0.0)
         pg.keyUp('ctrl')
     
@@ -478,6 +521,9 @@ class Desktop:
 
     def get_screenshot(self)->Image.Image:
         return pg.screenshot()
+
+    def scale_image(self)->Image.Image:
+        return self.get_screenshot().resize((self.RENDER_W, self.RENDER_H), Image.LANCZOS)
     
     @contextmanager
     def auto_minimize(self):

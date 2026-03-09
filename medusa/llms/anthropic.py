@@ -104,7 +104,6 @@ class ChatAnthropic(BaseChatLLM):
                 for tr in tool_results:
                     result_content = [{"type": "text", "text": tr.content}]
                     if tr.image:
-                        tr.scale_image(scale=0.7)
                         result_content.append({
                             "type": "image",
                             "source": {"type": "base64", "data": tr.image_to_base64(), "media_type": tr.mime_type}
@@ -127,7 +126,6 @@ class ChatAnthropic(BaseChatLLM):
                 serialized.append(MessageParam(role="assistant", content=content))
                 i += 1
             elif isinstance(message, ImageMessage):
-                message.scale_image(scale=0.7)
                 content = [
                     TextBlockParam(type="text", text=message.content),
                     ImageBlockParam(type="image", source=Base64ImageSourceParam(

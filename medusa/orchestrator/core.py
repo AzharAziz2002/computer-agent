@@ -1,4 +1,4 @@
-from medusa.orchestrator.tools.service import desktop_tool, shell_tool, done_tool, app_tool
+from medusa.orchestrator.tools.service import desktop, shell, done, app
 from medusa.messages import SystemMessage, HumanMessage, AIMessage, ToolCallMessage, ToolResultMessage
 from medusa.telemetry.views import AgentTelemetryEvent
 from medusa.telemetry.tracker import ProductTelemetry
@@ -20,7 +20,7 @@ class Agent:
         self.name = 'Medusa'
         self.description = 'An agent that can interact with GUI elements on Windows OS'
         self.registry = Registry([
-            desktop_tool, app_tool, shell_tool, done_tool,
+            desktop, shell, done,
         ])
         self.instructions = instructions
         self.browser = browser
@@ -55,7 +55,7 @@ class Agent:
                         desktop=self.desktop, browser=self.browser,
                         language=language, instructions=self.instructions
                     )
-                    context = ContextManager(block_limit=4, screenshot_limit=1, cache_query=False)
+                    context = ContextManager(block_limit=3, screenshot_limit=1, cache_query=True)
                     context.append(SystemMessage(content=system_prompt))
                     context.append(HumanMessage(content=query))
                     session_log.mark_ready()
@@ -116,7 +116,7 @@ class Agent:
                                 tool_input=tool_args
                             ))
 
-                            if tool_name == 'done_tool':
+                            if tool_name == 'done':
                                 action_response = self.registry.execute(tool_name=tool_name, desktop=None, **tool_args)
                                 answer = action_response.content
                                 context.append(ToolResultMessage(

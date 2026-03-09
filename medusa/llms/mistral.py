@@ -82,11 +82,10 @@ class ChatMistral(BaseChatLLM):
                 ))
             elif isinstance(message, ToolResultMessage):
                 if message.image:
-                    message.scale_image(scale=0.7)
                     image_url=f"data:{message.mime_type};base64,{message.image_to_base64()}"
                     tool_content=[
                         TextChunk(text=message.content),
-                        ImageURLChunk(type="image_url",image_url={"url": image_url, "detail": "auto"})
+                        ImageURLChunk(type="image_url",image_url={"url": image_url, "detail": "low"})
                     ]
                 else:
                     tool_content=message.content
@@ -102,11 +101,10 @@ class ChatMistral(BaseChatLLM):
                 content=[TextChunk(text=message.content)]
                 serialized.append(AssistantMessage(content=content))
             elif isinstance(message, ImageMessage):
-                message.scale_image(scale=0.7)
                 image=f"data:{message.mime_type};base64,{message.image_to_base64()}"
                 content=[
                     TextChunk(text=message.content),
-                    ImageURLChunk(type="image_url",image_url={"url": image, "detail": "auto"})
+                    ImageURLChunk(type="image_url",image_url={"url": image, "detail": "low"})
                 ]
                 serialized.append(UserMessage(role="user",content=content))
             else:

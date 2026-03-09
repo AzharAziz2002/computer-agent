@@ -82,54 +82,46 @@ class Memory(SharedBaseModel):
 class DesktopAction(SharedBaseModel):
     """Unified schema for all desktop interaction actions."""
 
-    action: Literal['click', 'type', 'scroll', 'drag', 'move', 'shortcut', 'wait', 'multi_select', 'multi_edit', 'screenshot'] = Field(
-        ..., description="Desktop interaction action to perform"
-    )
-    # screenshot params
-    mode: Optional[Literal['inspect', 'image']] = Field(
-        None, description="[screenshot] Observation mode: 'inspect' returns accessibility tree text, 'image' returns raw PNG screenshot"
+    action: Literal['click', 'type', 'scroll', 'drag', 'move', 'shortcut', 'hold_key', 'wait', 'multi_select', 'multi_edit', 'screenshot'] = Field(
+        ..., description="click: click at loc | type: type text into focused element | scroll: scroll at loc | drag: drag cursor to loc | move: move cursor without clicking | shortcut: press key combination | hold_key: hold a key down for duration seconds | wait: pause execution | multi_select: click multiple locs with optional Ctrl | multi_edit: click-and-type into multiple fields | screenshot: screenshot of the screen."
     )
     # Shared coordinate field (click, scroll, drag, move, multi_select)
     loc: Optional[tuple[int, int]] = Field(
-        None, description="(x, y) pixel coordinates for the action target. Required for click, drag, move. Optional for scroll (defaults to current cursor)"
+        None, description="(x, y): The x (pixels from the left edge) and y (pixels from the top edge) coordinates to move the mouse to. Required for click, drag, move. Relevant for scroll action."
     )
     # click params
     button: Literal['left', 'right', 'middle'] = Field(
         'left', description="[click] Mouse button: 'left' for selection, 'right' for context menu, 'middle' for browser actions"
     )
-    clicks: Literal[0, 1, 2] = Field(
-        1, description="[click] Click count: 0=hover only, 1=single click, 2=double click"
+    clicks: Literal[1, 2] = Field(
+        1, description="[click] Click count: 1=single click, 2=double click."
     )
-    # type params — type does NOT click; you must click the target element first with a separate click action
+    modifier: Optional[str] = Field(
+        None, description="[click, drag, scroll] Key to hold while performing the action, e.g. 'ctrl' for ctrl+click or ctrl+scroll, 'shift' for shift+click or shift+drag"
+    )
+    # type / shortcut / hold_key params
     text: Optional[str] = Field(
-        None, description="[type] Text string to type into the currently focused element. Click the target element first before calling type"
+        None, description="[type] text to type into focused element | [shortcut] key combo e.g. 'ctrl+c', 'alt+tab', 'enter' | [hold_key] key to hold e.g. 'shift', 'ctrl'"
     )
     clear: Literal['true', 'false'] = Field(
         'false', description="[type] Set 'true' to select-all. Use when replacing field content entirely"
     )
     caret_position: Literal['start', 'idle', 'end'] = Field(
-        'idle', description="[type] Use when want to move cursor before typing: 'start' = Home key (beginning of field), 'end' = End key (end of field), 'idle' = no movement (type at current cursor position)"
+        'idle', description="[type] Optional before typing: 'start'=beginning of field, 'end'=end of field, 'idle'=no movement"
     )
     press_enter: Literal['true', 'false'] = Field(
-        'false', description="[type] Set 'true' to press Enter after typing. Use for search bars, address bars, or form submission"
+        'false', description="[type] Set 'true' after typing. Use for search bars, address bars, or form submission"
     )
     # scroll params
-    scroll_type: Literal['horizontal', 'vertical'] = Field(
-        'vertical', description="[scroll] Scroll axis: 'vertical' for up/down, 'horizontal' for left/right"
-    )
-    direction: Literal['up', 'down', 'left', 'right'] = Field(
+    scroll_direction: Literal['up', 'down', 'left', 'right'] = Field(
         'down', description="[scroll] Scroll direction"
     )
     wheel_times: int = Field(
-        1, description="[scroll] Number of scroll wheel increments (1 wheel ~ 3-5 lines)"
-    )
-    # shortcut params
-    shortcut: Optional[str] = Field(
-        None, description="[shortcut] Key combination to press, e.g. 'ctrl+c', 'alt+tab', 'enter'"
+        1, description="[scroll] Number of scroll wheel increments (1 wheel ~ 12 lines)"
     )
     # wait params
     duration: Optional[int] = Field(
-        None, description="[wait] Pause duration in seconds"
+        None, description="[wait , hold_key] Pause duration in seconds"
     )
     # multi_select params
     press_ctrl: Literal['true', 'false'] = Field(

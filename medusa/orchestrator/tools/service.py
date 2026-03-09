@@ -6,13 +6,12 @@ from medusa.orchestrator.desktop.controller import Desktop
 from typing import Literal,Optional
 from medusa.tool import Tool
 from pathlib import Path
-from PIL import Image
 from time import sleep
 
 memory_path=Path.cwd()/'.memories'
 
-@Tool('Done Tool',args_schema=Done)
-def done_tool(answer:str,**kwargs):
+@Tool('Done',args_schema=Done)
+def done(answer:str,**kwargs):
     '''
     Signals task completion and provides the final answer to the user.
     
@@ -21,8 +20,8 @@ def done_tool(answer:str,**kwargs):
     '''
     return answer
 
-@Tool('App Tool',args_schema=App)
-def app_tool(mode:Literal['launch','resize','switch'],name:Optional[str]=None,loc:Optional[tuple[int,int]]=None,size:Optional[tuple[int,int]]=None,**kwargs)->str:
+@Tool('App',args_schema=App)
+def app(mode:Literal['launch','resize','switch'],name:Optional[str]=None,loc:Optional[tuple[int,int]]=None,size:Optional[tuple[int,int]]=None,**kwargs)->str:
     '''
     Manages Windows applications through launch, resize, and window switching operations.
     
@@ -36,8 +35,8 @@ def app_tool(mode:Literal['launch','resize','switch'],name:Optional[str]=None,lo
     desktop:Desktop=kwargs['desktop']
     return desktop.app(mode,name,loc,size)
 
-@Tool('Memory Tool',args_schema=Memory)
-def memory_tool(mode: Literal['view','read','write','delete','update'],path: Optional[str] = None,
+@Tool('Memory',args_schema=Memory)
+def memory(mode: Literal['view','read','write','delete','update'],path: Optional[str] = None,
     content: Optional[str] = None,operation: Optional[Literal['replace', 'insert']] = 'replace',
     old_str: Optional[str] = None,new_str: Optional[str] = None,line_number: Optional[int] = None,
     read_range: Optional[tuple[int, int]] = None,**kwargs) -> str:
@@ -146,15 +145,15 @@ def memory_tool(mode: Literal['view','read','write','delete','update'],path: Opt
         
     return "Invalid mode. Use 'view', 'write', 'read', 'update', or 'delete'."
 
-@Tool('Shell Tool',args_schema=Shell)
-def shell_tool(command: str,**kwargs) -> str:
+@Tool('Shell',args_schema=Shell)
+def shell(command: str,**kwargs) -> str:
     '''
     Executes PowerShell commands and returns output with status codes.
 
     Use this tool to:
         - Run Windows system commands and scripts
         - Query system information and configurations
-        - Automate file operations and system tasks
+        - Automate explorer, file operations and system tasks
         - Access Windows management utilities
 
     The working directory is set to the user's HOME directory by default.
@@ -173,35 +172,37 @@ def shell_tool(command: str,**kwargs) -> str:
     response,status=desktop.execute_command(command)
     return f'Response: {response}\nStatus Code: {status}'
 
-@Tool('Desktop Tool',args_schema=DesktopAction)
-def desktop_tool(action:str,**kwargs)->str:
+@Tool('Desktop',args_schema=DesktopAction)
+def desktop(action:str,**kwargs)->str:
     '''
-    Desktop interaction tool for all mouse, keyboard, and UI actions.
-    Actions:
-             - click: Click at coordinates (loc, button, clicks)
-             - type: Type into focused element (text, clear, caret_position, press_enter). Click the target first.
-             - scroll: Scroll content (loc, scroll_type, direction, wheel_times)
-             - drag: Drag from current cursor to destination (loc)
-             - move: Move cursor without clicking (loc)
-             - shortcut: Press keyboard shortcut (shortcut)
-             - wait: Pause execution (duration)
-             - multi_select: Select multiple elements (press_ctrl, elements)
-             - multi_edit: Type into multiple fields (elements)
-             - screenshot: Capture desktop state (mode: 'inspect' for accessibility tree, 'image' for PNG)
+    "Execute GUI actions on the desktop: mouse clicks, keyboard, scrolling, and screenshots."
+    * Some applications may take time to start or process actions, so use action='wait' to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try waiting before taking another screenshot.
+    * The screen's resolution is 1024x576.* The display number is 1
+    * You should ONLY call move if you intend to hover over an element without clicking. Otherwise, use the click or drag functions directly.
+    * Whenever you intend to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
+    * If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your click location so that the tip of the cursor visually falls on the element that you want to click.
+    * Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.
+   
+    Use action='wait' when an action triggers a process that takes time to complete—such as opening apps, loading webpages, submitting forms, or UI transitions.
+
     <use_parallel_tool_calls>
-    MUST Use parallel tool calls where you can:
-    ALWAYS combine related actions into a SINGLE response with multiple tool calls. When the next action logically follows without needing to inspect the result first (e.g. click then type, or action then screenshot), batch them in the same response.
+    MUST use parallel tool calls wherever possible. Batch actions that logically follow each other without needing to inspect the result in between.
 
-    Example 1 — click + screenshot:
-      [{action='click', loc=(x,y)}, {action='screenshot', mode='inspect'}]
+   
 
-    Example 2 — click + type + screenshot:
-      [{action='click', loc=(x,y)}, {action='type', text='hello', press_enter='true'}, {action='screenshot', mode='inspect'}]
+    Wait in parallel — always pair wait with screenshot so both execute together:
+      [{action='wait', duration=2}, {action='screenshot'}]
 
-    Example 3(only exception) — first screenshot right after user query is single only:
-      [{action='screenshot', mode='inspect'}] 
+    Example 1 — click something that loads (profile, app, page):
+      [{action='click', loc=(x,y)}, {action='wait', duration=2}, {action='screenshot'}]
 
-    Every response that performs an action(click, type, scroll, move, wait etc ) MUST use parallel tool calls with a action='screenshot' in same response.
+    Example 2 — click + type 
+      [{action='click', loc=(x,y)}, {action='type', text='hello', press_enter='true'}, {action='screenshot'}]
+
+    Example 3 — first screenshot after user query (single only):
+      [{action='screenshot'}]
+
+    Every response that performs an action MUST include action='screenshot' in the same parallel batch.
     </use_parallel_tool_calls>
     '''
     desktop:Desktop=kwargs['desktop']
@@ -210,9 +211,11 @@ def desktop_tool(action:str,**kwargs)->str:
             loc=kwargs['loc']
             button=kwargs.get('button','left')
             clicks=kwargs.get('clicks',1)
-            desktop.click(loc,button,clicks)
+            modifier=kwargs.get('modifier')
+            desktop.click(loc,button,clicks,modifier)
             num={1:'Single',2:'Double'}.get(clicks,str(clicks))
-            return f'{num} {button} clicked at ({loc[0]},{loc[1]}).'
+            mod_str=f' with {modifier} held' if modifier else ''
+            return f'{num} {button} clicked at ({loc[0]},{loc[1]}){mod_str}.'
 
         case 'type':
             text=kwargs['text']
@@ -224,16 +227,18 @@ def desktop_tool(action:str,**kwargs)->str:
 
         case 'scroll':
             loc=kwargs.get('loc')
-            st=kwargs.get('scroll_type','vertical')
-            direction=kwargs.get('direction','down')
+            scroll_direction=kwargs.get('scroll_direction','down')
             wt=kwargs.get('wheel_times',1)
-            resp=desktop.scroll(loc,st,direction,wt)
-            return resp or f'Scrolled {st} {direction} by {wt} wheel times.'
+            modifier=kwargs.get('modifier')
+            resp=desktop.scroll(loc,scroll_direction,wt,modifier)
+            return resp or f'Scrolled {scroll_direction} by {wt} wheel times.'
 
         case 'drag':
             loc=kwargs['loc']
-            desktop.drag(loc)
-            return f'Dragged to ({loc[0]},{loc[1]}).'
+            modifier=kwargs.get('modifier')
+            desktop.drag(loc,modifier)
+            mod_str=f' with {modifier} held' if modifier else ''
+            return f'Dragged to ({loc[0]},{loc[1]}){mod_str}.'
 
         case 'move':
             loc=kwargs['loc']
@@ -241,9 +246,15 @@ def desktop_tool(action:str,**kwargs)->str:
             return f'Moved cursor to ({loc[0]},{loc[1]}).'
 
         case 'shortcut':
-            shortcut=kwargs['shortcut']
+            shortcut=kwargs['text']
             desktop.shortcut(shortcut)
             return f'Pressed {shortcut}.'
+
+        case 'hold_key':
+            key=kwargs['text']
+            duration=kwargs['duration']
+            desktop.hold_key(key,duration)
+            return f'Held {key} for {duration}s.'
 
         case 'wait':
             duration=kwargs['duration']
@@ -259,16 +270,13 @@ def desktop_tool(action:str,**kwargs)->str:
             return f'Multi-edited {len(kwargs["elements"])} elements.'
 
         case 'screenshot':
-            mode=kwargs.get('mode','inspect')
-            if mode=='image':
-                img = desktop.get_screenshot().resize((1024, 576), Image.LANCZOS)
-                return ToolResult(is_success=True,content="Screenshot captured.",image=img)
-            desktop_state=desktop.get_state(use_vision=False)
-            observation=Prompt.screenshot_observation(desktop_state)
-            return ToolResult(is_success=True,content=observation)
+            return ToolResult(is_success=True,content="Screenshot captured.",image=desktop.scale_image())
+            # desktop_state=desktop.get_state(use_vision=False)
+            # observation=Prompt.screenshot_observation(desktop_state)
+            # return ToolResult(is_success=True,content=observation)
 
-@Tool('Scrape Tool',args_schema=Scrape)
-def scrape_tool(url:str,**kwargs)->str:
+@Tool('Scrape',args_schema=Scrape)
+def scrape(url:str,**kwargs)->str:
     '''
     Fetches webpage content and converts it to clean markdown format for analysis.
     

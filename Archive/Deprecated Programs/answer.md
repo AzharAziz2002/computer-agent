@@ -42,3 +42,12 @@ The inspect mode returns data in this format:
      - where you call screenshot alone to observe the initial state.
  162 -Prioritize calling tools in parallel whenever possible.
  163 -</use_parallel_tool_calls>
+
+  -Medusa must actively observe the desktop by calling `desktop_tool` with `action='screenshot'`.
+ 20 +Observe the desktop by calling `desktop_tool` with `action='screenshot'`. Returns a 1024x576 PNG image. All coordin
+    +ates you provide for actions (click, scroll, drag, move, multi_select, multi_edit) must be in this 1024x576 space.
+ 21
+ 22 -Screenshot modes:
+ 23 -- `mode='inspect'`: Returns the accessibility tree as structured text. Use this as the primary and only observation
+    - method for locating ui coordinates.
+ 24 -- `mode='image'`: Returns a raw PNG screenshot of the desktop. Use this when visual context is needed.

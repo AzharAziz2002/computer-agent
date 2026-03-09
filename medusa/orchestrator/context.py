@@ -57,7 +57,7 @@ class ContextManager:
     def _is_screenshot(self, msg) -> bool:
         """Check if a message is a screenshot ToolResultMessage."""
         return (isinstance(msg, ToolResultMessage)
-                and msg.tool_name == 'desktop_tool'
+                and msg.tool_name == 'desktop'
                 and (msg.image is not None
                      or msg.content.startswith('<desktop_state>')))
 

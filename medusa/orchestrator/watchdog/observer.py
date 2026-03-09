@@ -23,6 +23,8 @@ class FocusChangedEventHandler(comtypes.COMObject):
         try:
             if self.parent._focus_callback:
                 self.parent._focus_callback(sender)
+        except comtypes.COMError:
+            pass  # Element became stale between event fire and callback — transient, safe to ignore
         except Exception as e:
             print(f"Error in focus callback: {e}")
         return 0 # S_OK
@@ -38,6 +40,8 @@ class StructureChangedEventHandler(comtypes.COMObject):
         try:
             if self.parent._structure_callback:
                 self.parent._structure_callback(sender, changeType, runtimeId)
+        except comtypes.COMError:
+            pass
         except Exception as e:
             print(f"Error in structure callback: {e}")
         return 0 # S_OK
@@ -53,6 +57,8 @@ class PropertyChangedEventHandler(comtypes.COMObject):
         try:
             if self.parent._property_callback:
                 self.parent._property_callback(sender, propertyId, newValue)
+        except comtypes.COMError:
+            pass
         except Exception as e:
             print(f"Error in property callback: {e}")
         return 0 # S_OK

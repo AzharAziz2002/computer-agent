@@ -104,11 +104,10 @@ class ChatOpenAI(BaseChatLLM):
                 })
             elif isinstance(message, ToolResultMessage):
                 if message.image:
-                    message.scale_image(scale=0.7)
                     image_url = f"data:{message.mime_type};base64,{message.image_to_base64()}"
                     output: str | list[dict] = [
                         {"type": "input_text", "text": message.content},
-                        {"type": "input_image", "image_url": image_url, "detail": "auto"},
+                        {"type": "input_image", "image_url": image_url, "detail": "low"},
                     ]
                 else:
                     output = message.content
@@ -128,7 +127,6 @@ class ChatOpenAI(BaseChatLLM):
                     "content": message.content
                 })
             elif isinstance(message, ImageMessage):
-                message.scale_image(scale=0.7)
                 image_url = f"data:{message.mime_type};base64,{message.image_to_base64()}"
                 content_parts: list[ResponseInputContentParam] = []
                 if message.content:
@@ -139,7 +137,7 @@ class ChatOpenAI(BaseChatLLM):
                 content_parts.append({
                     "type": "input_image",
                     "image_url": image_url,
-                    "detail": "auto"
+                    "detail": "low"
                 })
                 serialized.append({
                     "role": "user",
