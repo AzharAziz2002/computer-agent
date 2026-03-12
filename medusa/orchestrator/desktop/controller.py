@@ -145,6 +145,7 @@ class Desktop:
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-EncodedCommand', encoded], 
                 capture_output=True, 
+                text=True,
                 errors='ignore',
                 timeout=25,
                 cwd=os.path.expanduser(path='~')
@@ -153,7 +154,7 @@ class Desktop:
             stderr=result.stderr
             return (stdout or stderr,result.returncode)
         except subprocess.TimeoutExpired:
-            return ('Command execution timed out', 1)
+            return ('Command execution timed out, Failed!', 1)
         except Exception as e:
             return ('Command execution failed', 1)
         

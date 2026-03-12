@@ -37,3 +37,4 @@ if __name__ == "__main__":
 #     print("\n=== Final Result ===")
 #     print(result)
 # claude-haiku-4-5-20251001
+# claude-sonnet-4-6

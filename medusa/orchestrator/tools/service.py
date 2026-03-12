@@ -1,12 +1,15 @@
 from medusa.orchestrator.tools.views import DesktopAction, Scrape, Done, Shell, Memory, App
+from medusa.orchestrator.shellmiddleware.search_rules import SearchValidator
 from medusa.orchestrator.prompts.generator import Prompt
 from medusa.orchestrator.registry.views import ToolResult
-from medusa.orchestrator.tools.guard import CommandGuard
+from medusa.orchestrator.shellmiddleware.command_safety import CommandGuard
 from medusa.orchestrator.desktop.controller import Desktop
 from typing import Literal,Optional
 from medusa.tool import Tool
 from pathlib import Path
 from time import sleep
+
+_search_validator = SearchValidator()
 
 memory_path=Path.cwd()/'.memories'
 
@@ -148,16 +151,27 @@ def memory(mode: Literal['view','read','write','delete','update'],path: Optional
 @Tool('Shell',args_schema=Shell)
 def shell(command: str,**kwargs) -> str:
     '''
-    Executes PowerShell commands and returns output with status codes.
+    Executes PowerShell commands. Prefer this over desktop whenever the task does not require interacting with an application's UI.
 
-    Use this tool to:
-        - Run Windows system commands and scripts
-        - Query system information and configurations
-        - Automate explorer, file operations and system tasks
-        - Access Windows management utilities
+    Always use shell for:
+        - File system: read, write, copy, move, delete, rename, search files and folders
+        - Open files or media: with default app
+        - Read file contents: 
+        - List directories: 
+        - OS tasks: processes, services, network, registry, environment, disk, system info
+        - Any task expressible as a PowerShell command
 
-    The working directory is set to the user's HOME directory by default.
-    Returns both command output and exit status code for error handling.
+    File search strategy:
+        ALWAYS use fd for file searching. NEVER use Get-ChildItem to search for files — it is extremely slow and will time out on large drives. Get-ChildItem is only acceptable for listing the contents of a known directory, never for searching.
+
+    Search rules:
+        - ALWAYS include filename keywords in the search — NEVER search by extension alone.
+        - Split user queries into individual keywords. Never search full phrases.
+        - Apply extension filters when file type is known (pdf, video, xlsx, etc).
+        - If no dir or path specified. Get all drives first: (Get-PSDrive -PSProvider FileSystem).Root — then search each one. Do not assume C drive only.
+        - Never quote multi-word phrases — use separate keywords so order and spacing do not matter.
+
+    The working directory is the user's HOME directory. Returns command output and exit code.
     '''
     verdict, reason = CommandGuard.classify(command)
 
@@ -168,9 +182,19 @@ def shell(command: str,**kwargs) -> str:
         if not CommandGuard.ask_user(command, reason):
             return f'[CANCELLED] User denied execution of command flagged as: {reason}'
 
+    ok, msg = _search_validator.validate(command)
+    if not ok:
+        return msg
+
     desktop:Desktop=kwargs['desktop']
     response,status=desktop.execute_command(command)
-    return f'Response: {response}\nStatus Code: {status}'
+    output = f'Response: {response}\nStatus Code: {status}'
+
+    stop_msg = _search_validator.track_result(command, response, status)
+    if stop_msg:
+        output += f'\n{stop_msg}'
+
+    return output
 
 @Tool('Desktop',args_schema=DesktopAction)
 def desktop(action:str,**kwargs)->str:

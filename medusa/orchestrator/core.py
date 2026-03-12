@@ -34,7 +34,7 @@ class Agent:
         self.desktop = Desktop()
         self.console = Console()
 
-    def invoke(self, query: str, start_time=None) -> AgentResult:
+    def invoke(self, query: str, start_time=None, step_callback=None, stop_event=None) -> AgentResult:
         """Invoke the agent with a query."""
         if query.strip() == '':
             return AgentResult(is_done=False, error="Query is empty. Please provide a valid query.")
@@ -104,7 +104,12 @@ class Agent:
                         )
 
                         is_done = False
-                        for i, tool_call in enumerate(llm_response.tool_calls):
+                        # Drop screenshot from batches that include a shell call
+                        tool_calls = llm_response.tool_calls
+                        has_shell = any(tc.name == 'shell' for tc in tool_calls)
+                        if has_shell:
+                            tool_calls = [tc for tc in tool_calls if tc.name != 'desktop' or tc.arguments.get('action') != 'screenshot']
+                        for i, tool_call in enumerate(tool_calls):
                             tool_name = tool_call.name
                             tool_args = tool_call.arguments
                             tool_call_id = tool_call.id
@@ -142,6 +147,17 @@ class Agent:
 
                                 # Log tool result in parallel (non-blocking)
                                 session_log.log_tool_result(self.agent_step.steps, tool_name, result_text or "")
+
+                                # Stream step to API clients
+                                if stop_event and stop_event.is_set():
+                                    raise RuntimeError("stopped")
+                                if step_callback:
+                                    step_callback({
+                                        "stepNumber": self.agent_step.steps,
+                                        "action": {"name": tool_name, "params": tool_args},
+                                        "observation": result_text or "",
+                                        "isError": not action_response.is_success
+                                    })
 
                         context.end_turn()
                         if is_done:

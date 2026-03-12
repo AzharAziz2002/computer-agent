@@ -51,3 +51,32 @@ The inspect mode returns data in this format:
  23 -- `mode='inspect'`: Returns the accessibility tree as structured text. Use this as the primary and only observation
     - method for locating ui coordinates.
  24 -- `mode='image'`: Returns a raw PNG screenshot of the desktop. Use this when visual context is needed.
+
+
+## @Tool('Shell',args_schema=Shell)
+def shell(command: str,**kwargs) -> str:
+    '''
+    Executes PowerShell commands. Prefer this over desktop whenever the task does not require interacting with an application's UI.
+
+    Always use shell for:
+        - File system: read, write, copy, move, delete, rename, search files and folders
+        - Open files or media: with default app
+        - Read file contents: 
+        - List directories: 
+        - OS tasks: processes, services, network, registry, environment, disk, system info
+        - Any task expressible as a PowerShell command
+
+    File search strategy:
+        ALWAYS use fd for file searching. NEVER use Get-ChildItem to search for files — it is extremely slow and will time out on large drives. Get-ChildItem is only acceptable for listing the contents of a known directory, never for searching.
+
+    Search rules:
+        - ALWAYS include filename keywords in the search — NEVER search by extension alone.         
+        - Split user queries into individual keywords. Never search full phrases.
+        - Apply extension filters when file type is known (pdf, video, xlsx, etc).
+        - If no dir or path specified. Get all drives first: (Get-PSDrive -PSProvider FileSystem).Root — then search each one. Do not assume C drive only.
+        - Never quote multi-word phrases — use separate keywords so order and spacing do not matter.
+        - After 2 failed search attempts, stop and consult the user in only text response: ask them to confirm the filename or narrow the search. Do not keep searching blindly.
+
+    Do NOT take a screenshot when performing shell commands.
+    The working directory is the user's HOME directory. Returns command output and exit code.
+    '''
