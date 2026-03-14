@@ -3,7 +3,7 @@
 This repository defines one primary coding/runtime agent: **Medusa**.
 
 Medusa is a Windows computer-use agent that can:
-- observe desktop state through UI Automation and screenshots,
+- observe desktop state through screenshots,
 - invoke structured tools,
 - execute shell commands (with safety guardrails),
 - and iterate until a task is complete.
@@ -16,6 +16,7 @@ This document is for coding agents that need to understand project structure, mo
 - Platform: Windows only
 - Python: `>=3.13` (managed with `uv`)
 - Entry flow: `main.py` -> `medusa.orchestrator.core.Agent`
+- API entry: `server.py` -> `medusa.api.app` (FastAPI, port 8000)
 
 
 ## Runtime Architecture
@@ -26,22 +27,35 @@ This document is for coding agents that need to understand project structure, mo
 4. `Registry.execute()` validates tool args (Pydantic), executes tool function, and returns a `ToolResult`.
 5. Desktop/tool outcomes are injected back into messages until `done_tool` is called.
 
+
 ## Module Responsibilities
 
 ### `medusa/orchestrator`
-- `core.py`: Main autonomous loop (LLM call, tool execution, retries, termination).
+- `core.py`: Main autonomous loop (LLM call, tool execution, retries, termination). Also filters screenshot tool calls from batches that contain a shell call.
 - `views.py`: Core agent data models (`AgentStep`, `AgentResult`, `Action`, `AgentData`).
-- `logger.py`: Async session markdown logging into `LOGS/session_*.md`.
 - `registry/`: Tool registration, schema emission, execution + validation.
-- `tools/service.py`: Concrete tool implementations.
+- `tools/service.py`: Concrete tool implementations (`done`, `app`, `memory`, `shell`, `desktop`, `scrape`).
 - `tools/views.py`: Tool argument schemas (Pydantic models).
-- `tools/guard.py`: Shell command classification (`allow`, `confirm`, `block`).
-- `desktop/controller.py`: OS and GUI interactions (apps, click/type/scroll/drag, shell execution).
+- `shellmiddleware/command_safety.py`: Shell command safety classification (`allow`, `confirm`, `block`). Replaces old `tools/guard.py`.
+- `shellmiddleware/search_rules.py`: File-search validation and consecutive-failure tracking. Blocks extension-only searches, bad search patterns (GCI -Recurse, where.exe wildcards), and stops the agent after 2 consecutive empty results.
+- `desktop/controller.py`: OS and GUI interactions (apps, click/type/scroll/drag, shell execution, screenshots).
 - `desktop/state.py`: App and desktop state dataclasses/enums.
-- `tree/inspector.py`: Accessibility tree traversal + filtering + DOM-aware extraction for browser content.
+- `tree/inspector.py`: Accessibility tree traversal. **Used only by `scrape_tool`** for browser DOM content extraction — not used for general desktop perception.
 - `tree/state.py`: Node/state models for interactive/scroll/text elements.
 - `watchdog/observer.py`: UIA event thread (focus, structure, property change listeners).
 - `prompts/`: Prompt templates + generator for system and observation messages.
+- `context.py`: Context window manager (block limit, screenshot deduplication, cache).
+
+### `medusa/api` — FastAPI backend for frontend integration
+- `app.py`: FastAPI app with CORS middleware, mounts `tasks` and `screenshot` routers.
+- `routers/tasks.py`: REST + WebSocket endpoints.
+  - `POST /api/tasks` — start a new agent task (runs `Agent.invoke` in a thread pool).
+  - `DELETE /api/tasks/{task_id}` — stop a running task.
+  - `WS /api/ws/{task_id}` — stream step updates to frontend as JSON frames (`TaskUpdateFrame`).
+- `routers/screenshot.py`: `GET /api/screenshot` — returns a live JPEG screenshot of the desktop.
+- `models.py`: Pydantic request/response models (`StartTaskRequest`, `StartTaskResponse`, `AgentStepModel`, `TaskUpdateFrame`).
+- `state.py`: In-memory task store (task status, steps, queues for WS broadcast).
+- `server.py` (project root): `uvicorn` entry point — `python server.py` starts on `http://127.0.0.1:8000`.
 
 ### `medusa/llms`
 - Common contract:
@@ -60,6 +74,10 @@ This document is for coding agents that need to understand project structure, mo
   - `ImageMessage`,
   - `ToolCallMessage`, `ToolResultMessage`.
 
+### `medusa/logs`
+- `logger.py`: Async session markdown logging into `LOGS/session_*.md`.
+- `contextwindow.py`: Context window tracking helpers.
+
 ### `medusa/tool`
 - Tool decorator and schema preprocessing.
 - Converts Pydantic models into provider-agnostic JSON schema consumed by registry and LLM adapters.
@@ -76,15 +94,29 @@ This document is for coding agents that need to understand project structure, mo
 - `test_tool_schemas.py`: Runtime schema generation/inspection for all registered tools and providers.
 - Outputs markdown report in same folder (`tool_schemas_report.md`).
 
+
 ## Tooling Surface (Agent-Visible)
 
 Registered in `Agent.registry`:
-- `desktop_tool`: unified desktop actions (`click`, `type`, `scroll`, `drag`, `move`, `shortcut`, `wait`, `multi_select`, `multi_edit`)
-- `app_tool`: app launch/switch/resize
-- `shell_tool`: PowerShell execution (guarded by `CommandGuard`)
-- `memory_tool`: persistent markdown memory files in `.memories`
-- `scrape_tool`: visible page content extraction via current accessibility tree state
-- `done_tool`: terminal tool to finalize answer
+- `desktop`: unified desktop actions (`click`, `type`, `scroll`, `drag`, `move`, `shortcut`, `wait`, `multi_select`, `multi_edit`, `screenshot`)
+- `app`: app launch/switch/resize
+- `shell`: PowerShell execution (guarded by `CommandGuard` + `SearchValidator`)
+- `memory`: persistent markdown memory files in `.memories`
+- `scrape`: visible browser page content via accessibility tree
+- `done`: terminal tool to finalize answer
+
+
+## Abandoned / Dormant Concepts
+
+These modules exist in the codebase but are **not active** in the current agent perception pipeline:
+
+- **`desktop.get_state(use_vision=False)`** — previously used to generate text-based desktop observations from the UI accessibility tree. Abandoned; the agent now observes exclusively via screenshots.
+- **`Prompt.screenshot_observation()`** — observation text generated from desktop state. Commented out in `service.py` screenshot case; not called anywhere active.
+- **`use_vision` flag on `Agent`** — the parameter still exists but has no effect; vision is always screenshot-based.
+- **Inspect mode** — was removed; there is no non-screenshot observation mode.
+- **`tree/inspector.py` for desktop perception** — the UI tree is still traversed, but **only** to serve `scrape_tool` (browser DOM extraction). It is not used to describe general desktop state to the agent.
+- **`tools/guard.py`** — deleted; replaced by `shellmiddleware/command_safety.py`.
+
 
 ## Configuration and Environment
 
@@ -92,40 +124,84 @@ Registered in `Agent.registry`:
 - Core dependencies in `pyproject.toml` include:
   - desktop automation (`pyautogui`, `pywin32`, `uiautomation`, `comtypes`),
   - LLM SDKs (Anthropic, Google, OpenAI, Groq, Ollama, Mistral, Cerebras),
+  - API server (`fastapi`, `uvicorn`),
   - infra (`pydantic`, `rapidfuzz`, `markdownify`, `posthog`).
+
 
 ## Common Dev Commands
 
 ```bash
 uv sync
-uv run python main.py
+uv run python main.py          # CLI agent
+python server.py               # API server on :8000
 uv run python tests/test_tool_schemas.py
 tree /f /a
 ```
 
+
 ## Where To Change Code
 
-- Add or modify a tool:
+- **Add or modify a tool:**
   - schema: `medusa/orchestrator/tools/views.py`
   - implementation: `medusa/orchestrator/tools/service.py`
   - registration: `medusa/orchestrator/core.py` (tool list in `Registry([...])`)
 
-- Add/modify provider support:
+- **Add/modify shell safety rules:**
+  - destructive command blocking/confirmation: `medusa/orchestrator/shellmiddleware/command_safety.py`
+  - search pattern enforcement + failure tracking: `medusa/orchestrator/shellmiddleware/search_rules.py`
+
+- **Add/modify provider support:**
   - new adapter in `medusa/llms/`
   - ensure `invoke()` returns `ChatLLMResponse`
   - implement message serializer + tool schema formatter
 
-- Change prompt behavior:
+- **Change prompt behavior:**
   - templates in `medusa/orchestrator/prompts/*.md`
   - assembly logic in `medusa/orchestrator/prompts/generator.py`
 
-- Change desktop perception or action behavior:
+- **Change desktop action behavior:**
   - `medusa/orchestrator/desktop/controller.py`
+
+- **Change browser scraping behavior:**
   - `medusa/orchestrator/tree/inspector.py`
-  - `medusa/orchestrator/watchdog/observer.py`
+
+- **Add API endpoints for the frontend:**
+  - add router in `medusa/api/routers/`
+  - register in `medusa/api/app.py`
+  - add models in `medusa/api/models.py`
+
+
+## API Contract (for frontend)
+
+Base URL: `http://127.0.0.1:8000`
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/tasks` | Start agent task. Body: `{query, model}`. Returns `{task_id}`. |
+| `DELETE` | `/api/tasks/{task_id}` | Stop a running task. |
+| `WS` | `/api/ws/{task_id}` | Stream step updates. Each frame is a `TaskUpdateFrame` JSON object. |
+| `GET` | `/api/screenshot` | Returns live desktop screenshot as JPEG. |
+
+`TaskUpdateFrame` shape:
+```json
+{
+  "task_id": "...",
+  "status": "running | done | failed",
+  "step": {
+    "id": "...",
+    "stepNumber": 1,
+    "action": { "name": "shell", "params": {} },
+    "observation": "...",
+    "isError": false
+  },
+  "result": "...",
+  "error": "..."
+}
+```
+
 
 ## Safety Notes
 
 - This agent operates with the same OS privileges as the running user.
-- `shell_tool` has guardrails, but not full sandboxing.
+- `shell_tool` has guardrails via `CommandGuard` (block/confirm/allow) and `SearchValidator` (search pattern enforcement), but not full sandboxing.
 - Desktop actions and shell commands can affect local files/apps; validate changes during development.

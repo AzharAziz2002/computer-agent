@@ -44,14 +44,14 @@ class Registry:
         Tool Schema: {json.dumps(tool.args_schema,indent=4)}
         """)
 
-    def execute(self, tool_name: str, desktop: Desktop|None=None, **kwargs) -> ToolResult:
+    def execute(self, tool_name: str, desktop: Desktop|None=None, browser=None, **kwargs) -> ToolResult:
         """Execute a tool by name (supports both tool_id and display name)."""
         tool = self.tools_registry.get(tool_name)
         if tool is None:
             return ToolResult(is_success=False, error=f"Tool '{tool_name}' not found.")
         try:
             args=tool.model.model_validate(kwargs)
-            result = tool.invoke(**({'desktop': desktop} | args.model_dump()))
+            result = tool.invoke(**({'desktop': desktop, 'browser': browser} | args.model_dump()))
             if isinstance(result, ToolResult):
                 return result
             return ToolResult(is_success=True, content=result)

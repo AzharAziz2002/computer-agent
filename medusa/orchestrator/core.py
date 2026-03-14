@@ -1,4 +1,5 @@
-from medusa.orchestrator.tools.service import desktop, shell, done, app
+from medusa.orchestrator.tools.service import desktop, shell, done, app, browser
+from medusa.orchestrator.browser.controller import BrowserController
 from medusa.messages import SystemMessage, HumanMessage, AIMessage, ToolCallMessage, ToolResultMessage
 from medusa.telemetry.views import AgentTelemetryEvent
 from medusa.telemetry.tracker import ProductTelemetry
@@ -16,14 +17,15 @@ from rich.markdown import Markdown
 from rich.console import Console
 
 class Agent:
-    def __init__(self, instructions: list[str]=[], browser: Browser=Browser.EDGE, llm: BaseChatLLM=None, max_consecutive_failures: int=3, use_vision: bool=False, auto_minimize: bool=False, enable_telemetry: bool=False):
+    def __init__(self, instructions: list[str]=[], browser_choice: Browser=Browser.EDGE, llm: BaseChatLLM=None, max_consecutive_failures: int=3, use_vision: bool=False, auto_minimize: bool=False, enable_telemetry: bool=False):
         self.name = 'Medusa'
         self.description = 'An agent that can interact with GUI elements on Windows OS'
         self.registry = Registry([
-            desktop, shell, done,
+         browser,
         ])
+        self.browser_controller = BrowserController()
         self.instructions = instructions
-        self.browser = browser
+        self.browser = browser_choice
         self.agent_step = AgentStep()
         self.max_consecutive_failures = max_consecutive_failures
         self.auto_minimize = auto_minimize
@@ -122,7 +124,7 @@ class Agent:
                             ))
 
                             if tool_name == 'done':
-                                action_response = self.registry.execute(tool_name=tool_name, desktop=None, **tool_args)
+                                action_response = self.registry.execute(tool_name=tool_name, desktop=None, browser=None, **tool_args)
                                 answer = action_response.content
                                 context.append(ToolResultMessage(
                                     content=answer or "",
@@ -134,7 +136,8 @@ class Agent:
                                 break
                             else:
                                 action_response = self.registry.execute(
-                                    tool_name=tool_name, desktop=self.desktop, **tool_args
+                                    tool_name=tool_name, desktop=self.desktop,
+                                    browser=self.browser_controller, **tool_args
                                 )
                                 result_text = action_response.content if action_response.is_success else action_response.error
 
@@ -174,10 +177,12 @@ class Agent:
                         is_success=True
                     ))
             self.agent_step.reset()
+            self.browser_controller.stop()
             session_log.finalize(self.llm.model_name)
             return AgentResult(is_done=True, content=answer)
         except KeyboardInterrupt:
             print("[Agent] Interrupted by user (Ctrl+C).")
+            self.browser_controller.stop()
             if self.telemetry:
                 self.telemetry.flush()
             session_log.finalize(self.llm.model_name)

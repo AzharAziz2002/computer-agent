@@ -150,3 +150,74 @@ class Scrape(SharedBaseModel):
         description="Full webpage URL including protocol (http:// or https://) to fetch and convert to markdown format",
         examples=['https://google.com', 'https://example.com/page', 'http://localhost:8080']
     )
+
+class BrowserAction(SharedBaseModel):
+    """Schema for browser automation actions via Playwright."""
+
+    action: Literal[
+        'start', 'stop', 'status',
+        'navigate', 'go_back', 'snapshot', 'screenshot',
+        'click', 'type', 'hover', 'select_option', 'press_key', 'scroll_to',
+        'tabs', 'open_tab', 'focus_tab', 'close_tab',
+        'evaluate', 'wait', 'pdf'
+    ] = Field(
+        ...,
+        description=(
+            "start: launch browser | stop: close browser | status: check state | "
+            "navigate: go to URL | go_back: previous page | "
+            "snapshot: get accessibility tree with element refs | screenshot: capture page image | "
+            "click: click element by ref | type: type into element by ref | "
+            "hover: hover element | select_option: select dropdown value | "
+            "press_key: press keyboard key | scroll_to: scroll element into view | "
+            "tabs: list open tabs | open_tab: new tab | focus_tab: switch tab | close_tab: close tab | "
+            "evaluate: run JavaScript | wait: pause | pdf: save as PDF"
+        )
+    )
+    url: Optional[str] = Field(
+        None, description="[navigate, open_tab] Target URL"
+    )
+    ref: Optional[str] = Field(
+        None, description="[click, type, hover, select_option, scroll_to] Element ref from snapshot (e.g. 'e0', 'e3')"
+    )
+    text: Optional[str] = Field(
+        None, description="[type] Text to type into the element"
+    )
+    key: Optional[str] = Field(
+        None, description="[press_key] Key name (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown')"
+    )
+    values: Optional[list[str]] = Field(
+        None, description="[select_option] Option values to select in dropdown"
+    )
+    tab_index: Optional[int] = Field(
+        None, description="[focus_tab, close_tab] Tab index from tabs list"
+    )
+    js: Optional[str] = Field(
+        None, description="[evaluate] JavaScript expression to execute in page context"
+    )
+    time_ms: Optional[int] = Field(
+        None, description="[wait] Duration in milliseconds"
+    )
+    full_page: bool = Field(
+        False, description="[screenshot] Capture full scrollable page instead of viewport"
+    )
+    submit: bool = Field(
+        False, description="[type] Press Enter after typing"
+    )
+    slowly: bool = Field(
+        False, description="[type] Type one character at a time (triggers key event handlers)"
+    )
+    button: Literal['left', 'right', 'middle'] = Field(
+        'left', description="[click] Mouse button"
+    )
+    double_click: bool = Field(
+        False, description="[click] Double-click"
+    )
+    channel: Optional[str] = Field(
+        None, description="[start] Browser channel: 'chrome', 'msedge', 'chromium'. Default: msedge"
+    )
+    user_data_dir: Optional[str] = Field(
+        None, description="[start] Path to browser profile directory for persistent sessions"
+    )
+    headless: Optional[bool] = Field(
+        None, description="[start] Run in headless mode (no visible window)"
+    )

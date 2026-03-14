@@ -4,7 +4,6 @@ from pydantic import BaseModel
 class StartTaskRequest(BaseModel):
     query: str
     model: str = "claude-sonnet-4-6"
-    use_vision: bool = False
 
 
 class StartTaskResponse(BaseModel):

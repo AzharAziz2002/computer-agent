@@ -44,10 +44,13 @@ class SessionLogger:
     """Per-session markdown logger for LLM responses, tool results, and billing summary."""
 
     def __init__(self, query: str, model_name: str = "unknown", start_time: datetime | None = None):
+        now = datetime.now()
+        self._start_time = start_time or now
         LOGS_DIR.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_path = LOGS_DIR / f"session_{timestamp}.md"
-        self._start_time = start_time or datetime.now()
+        daily_dir = LOGS_DIR / self._format_daily_dir(self._start_time)
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = self._start_time.strftime("%Y%m%d_%H%M%S")
+        self.log_path = daily_dir / f"session_{timestamp}.md"
         self._model_name = model_name
 
         self.log_path.write_text(
@@ -247,6 +250,10 @@ class SessionLogger:
             lines.append(f"> Billing not calculated — `{model_name}` is not a Claude model.\n")
 
         return "".join(lines)
+
+    @staticmethod
+    def _format_daily_dir(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%d_%a")
 
     # ------------------------------------------------------------------
     # Internal helpers

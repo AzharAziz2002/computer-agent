@@ -1,4 +1,4 @@
-from medusa.orchestrator.tools.views import DesktopAction, Scrape, Done, Shell, Memory, App
+from medusa.orchestrator.tools.views import DesktopAction, Scrape, Done, Shell, Memory, App, BrowserAction
 from medusa.orchestrator.shellmiddleware.search_rules import SearchValidator
 from medusa.orchestrator.prompts.generator import Prompt
 from medusa.orchestrator.registry.views import ToolResult
@@ -328,3 +328,114 @@ def scrape(url:str,**kwargs)->str:
     header_status = "Reached top" if vertical_scroll_percent <= 0 else "Scroll up to see more"
     footer_status = "Reached bottom" if vertical_scroll_percent >= 100 else "Scroll down to see more"
     return f'URL:{url}\nContent:\n{header_status}\n{content}\n{footer_status}'
+
+@Tool('Browser', args_schema=BrowserAction)
+def browser(action: str, **kwargs) -> str:
+    '''
+    Automate web browser via Playwright. Provides structured access to web pages
+    through an accessibility-based element reference system.
+
+    Workflow:
+        1. action='navigate' with url — go to a webpage (browser auto-starts)
+        2. action='snapshot' — get the page accessibility tree with element refs [e0], [e1], ...
+        3. Use refs to interact: click(ref='e3'), type(ref='e5', text='hello'), etc.
+        4. action='snapshot' again after interactions to see updated page state
+
+    Element refs (e.g. 'e0', 'e3') are assigned by snapshot and used by click, type, hover,
+    select_option, scroll_to. Refs are invalidated after navigation — always take a new snapshot.
+
+    Use browser tool instead of desktop tool for web interactions — it is more
+    reliable than clicking coordinates on screen.
+    '''
+    from medusa.orchestrator.browser.controller import BrowserController
+    ctrl: BrowserController = kwargs['browser']
+
+    match action:
+        case 'start':
+            return ctrl.start(
+                channel=kwargs.get('channel'),
+                user_data_dir=kwargs.get('user_data_dir'),
+                headless=kwargs.get('headless'),
+            )
+        case 'stop':
+            return ctrl.stop()
+        case 'status':
+            return ctrl.status()
+        case 'navigate':
+            url = kwargs.get('url')
+            if not url:
+                return 'Error: url is required for navigate action.'
+            return ctrl.navigate(url)
+        case 'go_back':
+            return ctrl.go_back()
+        case 'snapshot':
+            return ctrl.snapshot()
+        case 'screenshot':
+            image = ctrl.screenshot(full_page=kwargs.get('full_page', False))
+            return ToolResult(is_success=True, content='Browser screenshot captured.', image=image)
+        case 'click':
+            ref = kwargs.get('ref')
+            if not ref:
+                return 'Error: ref is required for click action. Take a snapshot first.'
+            return ctrl.click(
+                ref=ref,
+                button=kwargs.get('button', 'left'),
+                double_click=kwargs.get('double_click', False),
+            )
+        case 'type':
+            ref = kwargs.get('ref')
+            text = kwargs.get('text')
+            if not ref:
+                return 'Error: ref is required for type action. Take a snapshot first.'
+            if text is None:
+                return 'Error: text is required for type action.'
+            return ctrl.type_text(
+                ref=ref, text=text,
+                submit=kwargs.get('submit', False),
+                slowly=kwargs.get('slowly', False),
+            )
+        case 'hover':
+            ref = kwargs.get('ref')
+            if not ref:
+                return 'Error: ref is required for hover action.'
+            return ctrl.hover(ref)
+        case 'select_option':
+            ref = kwargs.get('ref')
+            values = kwargs.get('values')
+            if not ref:
+                return 'Error: ref is required for select_option action.'
+            if not values:
+                return 'Error: values is required for select_option action.'
+            return ctrl.select_option(ref, values)
+        case 'press_key':
+            key = kwargs.get('key')
+            if not key:
+                return 'Error: key is required for press_key action.'
+            return ctrl.press_key(key)
+        case 'scroll_to':
+            ref = kwargs.get('ref')
+            if not ref:
+                return 'Error: ref is required for scroll_to action.'
+            return ctrl.scroll_to(ref)
+        case 'tabs':
+            return ctrl.tabs()
+        case 'open_tab':
+            return ctrl.open_tab(url=kwargs.get('url'))
+        case 'focus_tab':
+            index = kwargs.get('tab_index')
+            if index is None:
+                return 'Error: tab_index is required for focus_tab action.'
+            return ctrl.focus_tab(index)
+        case 'close_tab':
+            return ctrl.close_tab(index=kwargs.get('tab_index'))
+        case 'evaluate':
+            js = kwargs.get('js')
+            if not js:
+                return 'Error: js is required for evaluate action.'
+            return ctrl.evaluate(js)
+        case 'wait':
+            return ctrl.wait(kwargs.get('time_ms', 1000))
+        case 'pdf':
+            return ctrl.pdf()
+        case _:
+            return f'Error: Unknown browser action "{action}".'

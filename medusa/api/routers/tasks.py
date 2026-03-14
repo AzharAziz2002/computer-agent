@@ -16,7 +16,7 @@ load_dotenv()
 router = APIRouter()
 
 
-def _run_agent(task_id: str, query: str, model: str, use_vision: bool, loop: asyncio.AbstractEventLoop) -> None:
+def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEventLoop) -> None:
     """Runs Agent.invoke() in a thread pool — notifies WebSocket clients via asyncio queues."""
     task = store.get(task_id)
     if not task:
@@ -45,7 +45,7 @@ def _run_agent(task_id: str, query: str, model: str, use_vision: bool, loop: asy
             api_key=os.getenv("CLAUDE_API_KEY"),
             thinking_budget=-1,
         )
-        agent = Agent(llm=llm, use_vision=use_vision, auto_minimize=True)
+        agent = Agent(llm=llm, auto_minimize=True)
         result = agent.invoke(
             query,
             start_time=datetime.now(),
@@ -82,7 +82,7 @@ async def start_task(req: StartTaskRequest):
     task_id = str(uuid4())
     store.create(task_id, req.query)
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_agent, task_id, req.query, req.model, req.use_vision, loop)
+    loop.run_in_executor(None, _run_agent, task_id, req.query, req.model, loop)
     return StartTaskResponse(task_id=task_id)
 
 

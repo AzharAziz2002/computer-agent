@@ -6,19 +6,22 @@ from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
 
-CONTEXT_LOG_DIR = Path(__file__).parent.parent.parent / "LOGS" / "context"
+CONTEXT_LOG_DIR = Path(__file__).parent.parent.parent / "LOGS" / "Context"
 
 
 class ContextLogger:
     """Async logger that dumps context snapshots to markdown after each turn."""
 
     def __init__(self):
+        now = datetime.now()
         CONTEXT_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_path = CONTEXT_LOG_DIR / f"context_{timestamp}.md"
+        daily_dir = CONTEXT_LOG_DIR / self._format_daily_dir(now)
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        self.log_path = daily_dir / f"context_{timestamp}.md"
         self.log_path.write_text(
             f"# Context Snapshots\n\n"
-            f"**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n",
+            f"**Started:** {now.strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n",
             encoding="utf-8",
         )
         self._loop = asyncio.new_event_loop()
@@ -97,3 +100,7 @@ class ContextLogger:
             self._thread.join(timeout=3)
         except Exception:
             pass
+
+    @staticmethod
+    def _format_daily_dir(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%d_%a")
