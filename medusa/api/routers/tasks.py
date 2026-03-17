@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 
 from medusa.orchestrator.core import Agent
-from medusa.orchestrator.desktop.state import Browser
 from medusa.llms.anthropic import ChatAnthropic
 from medusa.api.models import StartTaskRequest, StartTaskResponse, AgentStepModel, AgentActionModel, TaskUpdateFrame
 from medusa.api.state import store
@@ -16,8 +15,8 @@ load_dotenv()
 router = APIRouter()
 
 
-def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEventLoop) -> None:
-    """Runs Agent.invoke() in a thread pool — notifies WebSocket clients via asyncio queues."""
+async def _run_agent(task_id: str, query: str, model: str) -> None:
+    """Runs Agent.invoke() as an async task — notifies WebSocket clients via asyncio queues."""
     task = store.get(task_id)
     if not task:
         return
@@ -30,6 +29,7 @@ def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEvent
         step = AgentStepModel(
             id=str(uuid4()),
             stepNumber=step_num,
+            thought=raw.get("thought"),
             action=AgentActionModel(**action_raw) if action_raw else None,
             observation=raw.get("observation"),
             isError=raw.get("isError", False),
@@ -37,7 +37,7 @@ def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEvent
         task.steps.append(step.model_dump())
         frame = TaskUpdateFrame(task_id=task_id, status="running", step=step).model_dump()
         for q in task.queues:
-            loop.call_soon_threadsafe(q.put_nowait, frame)
+            q.put_nowait(frame)
 
     try:
         llm = ChatAnthropic(
@@ -46,7 +46,7 @@ def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEvent
             thinking_budget=-1,
         )
         agent = Agent(llm=llm, auto_minimize=True)
-        result = agent.invoke(
+        result = await agent.invoke(
             query,
             start_time=datetime.now(),
             step_callback=step_callback,
@@ -72,17 +72,16 @@ def _run_agent(task_id: str, query: str, model: str, loop: asyncio.AbstractEvent
             error=task.error,
         ).model_dump()
         for q in task.queues:
-            loop.call_soon_threadsafe(q.put_nowait, final_frame)
+            q.put_nowait(final_frame)
             # Sentinel so WS handler knows to close
-            loop.call_soon_threadsafe(q.put_nowait, None)
+            q.put_nowait(None)
 
 
 @router.post("/api/tasks", response_model=StartTaskResponse)
 async def start_task(req: StartTaskRequest):
     task_id = str(uuid4())
     store.create(task_id, req.query)
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_agent, task_id, req.query, req.model, loop)
+    asyncio.create_task(_run_agent(task_id, req.query, req.model))
     return StartTaskResponse(task_id=task_id)
 
 

@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 from pydantic import BaseModel
 from typing import Any
 
@@ -32,5 +34,7 @@ class Tool:
         self.function = function
         return self
 
-    def invoke(self, *args, **kwargs):
-        return self.function(*args, **kwargs)
+    async def invoke(self, *args, **kwargs):
+        if inspect.iscoroutinefunction(self.function):
+            return await self.function(*args, **kwargs)
+        return await asyncio.to_thread(self.function, *args, **kwargs)

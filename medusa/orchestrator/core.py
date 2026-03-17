@@ -15,13 +15,15 @@ from medusa.llms.base import BaseChatLLM
 from contextlib import nullcontext
 from rich.markdown import Markdown
 from rich.console import Console
+import traceback
+import asyncio
 
 class Agent:
     def __init__(self, instructions: list[str]=[], browser_choice: Browser=Browser.EDGE, llm: BaseChatLLM=None, max_consecutive_failures: int=3, use_vision: bool=False, auto_minimize: bool=False, enable_telemetry: bool=False):
         self.name = 'Medusa'
         self.description = 'An agent that can interact with GUI elements on Windows OS'
         self.registry = Registry([
-         browser,
+        browser
         ])
         self.browser_controller = BrowserController()
         self.instructions = instructions
@@ -36,7 +38,7 @@ class Agent:
         self.desktop = Desktop()
         self.console = Console()
 
-    def invoke(self, query: str, start_time=None, step_callback=None, stop_event=None) -> AgentResult:
+    async def invoke(self, query: str, start_time=None, step_callback=None, stop_event=None) -> AgentResult:
         """Invoke the agent with a query."""
         if query.strip() == '':
             return AgentResult(is_done=False, error="Query is empty. Please provide a valid query.")
@@ -45,6 +47,8 @@ class Agent:
             model_name=self.llm.model_name if self.llm else "unknown",
             start_time=start_time,
         )
+        answer = None
+        error = None
         try:
             with (self.desktop.auto_minimize() if self.auto_minimize else nullcontext()):
                 self.watchdog.set_focus_callback(self.desktop.tree._on_focus_change)
@@ -52,7 +56,6 @@ class Agent:
                 with self.watchdog:
                     language = self.desktop.get_default_language()
                     tools_schema = self.registry.get_tools_schema()
-                    answer = None
                     system_prompt = Prompt.system_prompt(
                         desktop=self.desktop, browser=self.browser,
                         language=language, instructions=self.instructions
@@ -64,14 +67,20 @@ class Agent:
 
                     while True:
                         self.agent_step.step_increment()
+                        print(f"[DEBUG] === Step {self.agent_step.steps} ===")
 
                         # Retry logic for LLM failures
                         llm_response = None
                         for consecutive_failures in range(1, self.max_consecutive_failures + 1):
                             try:
-                                llm_response = self.llm.invoke(context.messages, tools=tools_schema)
+                                print(f"[DEBUG] Calling LLM (attempt {consecutive_failures})...")
+                                llm_response = await asyncio.to_thread(
+                                    self.llm.invoke, context.messages, tools=tools_schema
+                                )
+                                print(f"[DEBUG] LLM returned. tool_calls={len(llm_response.tool_calls) if llm_response.tool_calls else 0}, content_len={len(llm_response.content) if llm_response.content else 0}")
                                 break
                             except Exception as e:
+                                print(f"[DEBUG] LLM attempt {consecutive_failures} failed: {e}")
                                 if consecutive_failures == self.max_consecutive_failures:
                                     if self.telemetry:
                                         self.telemetry.capture(AgentTelemetryEvent(
@@ -82,11 +91,12 @@ class Agent:
                                             provider=self.llm.provider,
                                             is_success=False
                                         ))
-                                    result = AgentResult(is_done=False, error=str(e))
-                                    return result
+                                    error = str(e)
+                                    raise  # Let finally handle cleanup
 
                         if not llm_response or not llm_response.tool_calls:
                             answer = llm_response.content if llm_response else ""
+                            print(f"[DEBUG] Loop EXIT: no tool_calls. answer='{answer[:200] if answer else ''}'")
                             session_log.log_response(
                                 step=self.agent_step.steps,
                                 content=answer,
@@ -123,9 +133,11 @@ class Agent:
                                 tool_input=tool_args
                             ))
 
+                            print(f"[DEBUG] Tool call: {tool_name}({tool_args})")
                             if tool_name == 'done':
-                                action_response = self.registry.execute(tool_name=tool_name, desktop=None, browser=None, **tool_args)
+                                action_response = await self.registry.execute(tool_name=tool_name, desktop=None, browser=None, **tool_args)
                                 answer = action_response.content
+                                print(f"[DEBUG] Loop EXIT: done tool called. answer='{answer[:200] if answer else ''}'  is_success={action_response.is_success}")
                                 context.append(ToolResultMessage(
                                     content=answer or "",
                                     tool_call_id=tool_call_id,
@@ -135,11 +147,14 @@ class Agent:
                                 is_done = True
                                 break
                             else:
-                                action_response = self.registry.execute(
+                                action_response = await self.registry.execute(
                                     tool_name=tool_name, desktop=self.desktop,
                                     browser=self.browser_controller, **tool_args
                                 )
                                 result_text = action_response.content if action_response.is_success else action_response.error
+                                print(f"[DEBUG] Tool result: is_success={action_response.is_success}, text='{(result_text or '')[:150]}'")
+                                if not action_response.is_success:
+                                    print(f"[DEBUG] Tool ERROR: {action_response.error}")
 
                                 context.append(ToolResultMessage(
                                     content=result_text or "",
@@ -157,6 +172,7 @@ class Agent:
                                 if step_callback:
                                     step_callback({
                                         "stepNumber": self.agent_step.steps,
+                                        "thought": (llm_response.content or None) if i == 0 else None,
                                         "action": {"name": tool_name, "params": tool_args},
                                         "observation": result_text or "",
                                         "isError": not action_response.is_success
@@ -164,7 +180,9 @@ class Agent:
 
                         context.end_turn()
                         if is_done:
+                            print("[DEBUG] Loop EXIT: is_done=True after done tool")
                             break
+                        print(f"[DEBUG] End of step {self.agent_step.steps}, looping...")
 
                 if self.telemetry:
                     self.telemetry.capture(AgentTelemetryEvent(
@@ -176,19 +194,26 @@ class Agent:
                         provider=self.llm.provider,
                         is_success=True
                     ))
-            self.agent_step.reset()
-            self.browser_controller.stop()
-            session_log.finalize(self.llm.model_name)
             return AgentResult(is_done=True, content=answer)
         except KeyboardInterrupt:
             print("[Agent] Interrupted by user (Ctrl+C).")
-            self.browser_controller.stop()
-            if self.telemetry:
-                self.telemetry.flush()
+            error = "Interrupted by user"
+            return AgentResult(is_done=False, error=error)
+        except Exception as e:
+            error = str(e)
+            print(f"[Agent] Exception: {error}")
+            traceback.print_exc()
+            return AgentResult(is_done=False, error=error)
+        finally:
+            print(f"[DEBUG] === FINALLY cleanup === error={error}")
+            self.agent_step.reset()
+            print("[DEBUG] Finalizing session log...")
             session_log.finalize(self.llm.model_name)
-            return AgentResult(is_done=False, error="Interrupted by user")
+            print("[DEBUG] Session log finalized.")
+            if self.telemetry and error:
+                self.telemetry.flush()
 
     def print_response(self, query: str, start_time=None):
         """Print the response from the agent."""
-        response = self.invoke(query, start_time=start_time)
+        response = asyncio.run(self.invoke(query, start_time=start_time))
         self.console.print(Markdown(response.content or response.error))

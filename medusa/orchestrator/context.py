@@ -55,11 +55,14 @@ class ContextManager:
         self._turns = [turn for turn in self._turns if turn]
 
     def _is_screenshot(self, msg) -> bool:
-        """Check if a message is a screenshot ToolResultMessage."""
-        return (isinstance(msg, ToolResultMessage)
-                and msg.tool_name == 'desktop'
-                and (msg.image is not None
-                     or msg.content.startswith('<desktop_state>')))
+        """Check if a message is a screenshot or snapshot ToolResultMessage."""
+        if not isinstance(msg, ToolResultMessage):
+            return False
+        if msg.tool_name == 'desktop':
+            return msg.image is not None or msg.content.startswith('<desktop_state>')
+        if msg.tool_name == 'browser':
+            return msg.image is not None or msg.content.startswith('Page:')
+        return False
 
     @property
     def messages(self) -> list:

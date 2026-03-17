@@ -333,7 +333,7 @@ class Desktop:
                     pg.sleep(0.02)
                     pg.keyUp('Shift')
                 case _:
-                    return 'Invalid direction. Use "up", "down", "left", or "right".'
+                    raise ValueError(f'Invalid scroll direction "{scroll_direction}". Use "up", "down", "left", or "right".')
         finally:
             if modifier:
                 pg.keyUp(modifier)

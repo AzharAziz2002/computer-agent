@@ -10,11 +10,12 @@ DEFAULT_CDP_PORT = 9222
 
 @dataclass
 class BrowserConfig:
-    channel: str = 'msedge'
+    channel: str = 'chrome'
     user_data_dir: str | None = None
     headless: bool = False
     viewport_width: int = 1280
     viewport_height: int = 720
+    upload_root: str | None = None   # defaults to ~/.medusa/uploads
     extra_args: list[str] = field(default_factory=list)
 
 
