@@ -34,8 +34,19 @@ This document is for coding agents that need to understand project structure, mo
 - `core.py`: Main autonomous loop (LLM call, tool execution, retries, termination). Also filters screenshot tool calls from batches that contain a shell call.
 - `views.py`: Core agent data models (`AgentStep`, `AgentResult`, `Action`, `AgentData`).
 - `registry/`: Tool registration, schema emission, execution + validation.
-- `tools/service.py`: Concrete tool implementations (`done`, `app`, `memory`, `shell`, `desktop`, `scrape`).
-- `tools/views.py`: Tool argument schemas (Pydantic models).
+- `tools/`: Modular tool system (each tool has its own implementation + schema files).
+  - `base.py`: `SharedBaseModel` base class for all tool schemas.
+  - `{tool}_tool.py`: Tool implementations (`desktop_tool`, `shell_tool`, `memory_tool`, `browser_tool`, `general_tool` for `done`/`app`/`scrape`).
+  - `{tool}_schema.py`: Tool argument schemas (Pydantic models).
+  - `service.py`: Re-exports for backward compatibility.
+  - `views.py`: Re-exports for backward compatibility.
+- `browser/`: Browser automation and snapshot capture via Playwright.
+  - `controller.py`: Async Playwright browser control (navigation, interaction, screenshot).
+  - `relay.py`: Extension relay for accessing Chrome user profiles.
+  - `snapshot.py`: Browser page state capture (DOM, loaded resources, page metrics).
+  - `config.py`: Browser configuration (profiles, launch args, timeouts).
+  - `constants.py`: Browser-related constants.
+  - `state.py`: Browser state dataclass.
 - `shellmiddleware/command_safety.py`: Shell command safety classification (`allow`, `confirm`, `block`). Replaces old `tools/guard.py`.
 - `shellmiddleware/search_rules.py`: File-search validation and consecutive-failure tracking. Blocks extension-only searches, bad search patterns (GCI -Recurse, where.exe wildcards), and stops the agent after 2 consecutive empty results.
 - `desktop/controller.py`: OS and GUI interactions (apps, click/type/scroll/drag, shell execution, screenshots).
@@ -98,7 +109,8 @@ This document is for coding agents that need to understand project structure, mo
 ## Tooling Surface (Agent-Visible)
 
 Registered in `Agent.registry`:
-- `desktop`: unified desktop actions (`click`, `type`, `scroll`, `drag`, `move`, `shortcut`, `wait`, `multi_select`, `multi_edit`, `screenshot`)
+- `desktop`: unified desktop actions (`click`, `type`, `scroll`, `drag`, `move`, `shortcut`, `hold_key`, `wait`, `multi_select`, `multi_edit`, `screenshot`) via pyautogui
+- `browser`: browser automation via Playwright (navigate, click, type, screenshot)
 - `app`: app launch/switch/resize
 - `shell`: PowerShell execution (guarded by `CommandGuard` + `SearchValidator`)
 - `memory`: persistent markdown memory files in `.memories`
@@ -142,9 +154,10 @@ tree /f /a
 ## Where To Change Code
 
 - **Add or modify a tool:**
-  - schema: `medusa/orchestrator/tools/views.py`
-  - implementation: `medusa/orchestrator/tools/service.py`
+  - schema: `medusa/orchestrator/tools/{tool}_schema.py`
+  - implementation: `medusa/orchestrator/tools/{tool}_tool.py`
   - registration: `medusa/orchestrator/core.py` (tool list in `Registry([...])`)
+  - backward compatibility: optionally update `service.py` and `views.py` re-exports
 
 - **Add/modify shell safety rules:**
   - destructive command blocking/confirmation: `medusa/orchestrator/shellmiddleware/command_safety.py`
@@ -161,6 +174,11 @@ tree /f /a
 
 - **Change desktop action behavior:**
   - `medusa/orchestrator/desktop/controller.py`
+
+- **Change browser automation behavior:**
+  - Playwright control: `medusa/orchestrator/browser/controller.py`
+  - Browser snapshots: `medusa/orchestrator/browser/snapshot.py`
+  - Profile management: `medusa/orchestrator/browser/relay.py` + `config.py`
 
 - **Change browser scraping behavior:**
   - `medusa/orchestrator/tree/inspector.py`

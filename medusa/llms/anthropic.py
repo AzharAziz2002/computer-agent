@@ -146,15 +146,29 @@ class ChatAnthropic(BaseChatLLM):
 
         Screenshot cache_control is set upstream by ContextManager._mark_latest_screenshot()
         and passed through during serialization — no screenshot logic needed here.
+
+        Budget: Anthropic allows max 4 cache blocks per request.
+        System=1, Tools=1 are always present → 2 slots remain for screenshots/query.
+        Only add query cache if those 2 remaining slots aren't already consumed by screenshots.
         """
-        # Cache the user query (first user message)
-        if cache_query:
-            for msg in messages:
-                if msg.get("role") == "user" and isinstance(msg.get("content"), list):
-                    block = msg["content"][0]
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        block["cache_control"] = {"type": "ephemeral"}
-                        break
+        if not cache_query:
+            return
+        # Count cache blocks already set on serialized messages (screenshots from ContextManager)
+        existing = sum(
+            1 for msg in messages
+            if isinstance(msg.get("content"), list)
+            for block in msg["content"]
+            if isinstance(block, dict) and "cache_control" in block
+        )
+        # 4 total allowed - 1 system - 1 tools = 2 remaining; if screenshots fill them, skip
+        if existing >= 2:
+            return
+        for msg in messages:
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                block = msg["content"][0]
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block["cache_control"] = {"type": "ephemeral"}
+                    break
 
     def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None = None):
         """Invoke Anthropic API with optional native tool calling."""
