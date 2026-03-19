@@ -153,6 +153,14 @@ class BrowserAction(SharedBaseModel):
     headless: Optional[bool] = Field(
         None, description="[start] Run in headless mode (no visible window)"
     )
+    profile: Optional[Literal['chrome', 'edge']] = Field(
+        None,
+        description=(
+            "[start] Connect to user's real browser via extension relay instead of launching "
+            "an isolated browser. Requires the Medusa Browser Relay extension installed and "
+            "active in Chrome/Edge. The extension attaches to tabs the user selects."
+        )
+    )
 
 
 

@@ -108,11 +108,14 @@ class ChatAnthropic(BaseChatLLM):
                             "type": "image",
                             "source": {"type": "base64", "data": tr.image_to_base64(), "media_type": tr.mime_type}
                         })
-                    result_blocks.append(ToolResultBlockParam(
+                    block = ToolResultBlockParam(
                         type="tool_result",
                         tool_use_id=tr.tool_call_id,
                         content=result_content
-                    ))
+                    )
+                    if tr.cache_control:
+                        block["cache_control"] = tr.cache_control
+                    result_blocks.append(block)
                 if result_blocks:
                     serialized.append(MessageParam(role="user", content=result_blocks))
 
@@ -139,7 +142,11 @@ class ChatAnthropic(BaseChatLLM):
         return system_instruction, serialized
 
     def _apply_cache_control(self, messages: list, cache_query: bool = True):
-        """Apply ephemeral cache breakpoints to stable content."""
+        """Apply ephemeral cache breakpoints to stable content.
+
+        Screenshot cache_control is set upstream by ContextManager._mark_latest_screenshot()
+        and passed through during serialization — no screenshot logic needed here.
+        """
         # Cache the user query (first user message)
         if cache_query:
             for msg in messages:
@@ -148,26 +155,6 @@ class ChatAnthropic(BaseChatLLM):
                     if isinstance(block, dict) and block.get("type") == "text":
                         block["cache_control"] = {"type": "ephemeral"}
                         break
-
-        # Cache the second-to-last screenshot tool_result
-        screenshot_results = []
-        for msg in messages:
-            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
-                for block in msg["content"]:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        content = block.get("content", [])
-                        has_screenshot = any(
-                            isinstance(c, dict) and (
-                                c.get("type") == "image"
-                                or (c.get("type") == "text" and c.get("text", "").startswith("<desktop_state>"))
-                            )
-                            for c in (content if isinstance(content, list) else [])
-                        )
-                        if has_screenshot:
-                            screenshot_results.append(block)
-
-        if len(screenshot_results) >= 2:
-            screenshot_results[-2]["cache_control"] = {"type": "ephemeral"}
 
     def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None = None):
         """Invoke Anthropic API with optional native tool calling."""

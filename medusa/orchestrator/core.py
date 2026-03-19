@@ -1,5 +1,6 @@
 from medusa.orchestrator.tools.service import desktop, shell, done, app, browser
 from medusa.orchestrator.browser.controller import BrowserController
+from medusa.orchestrator.browser.config import BrowserConfig
 from medusa.messages import SystemMessage, HumanMessage, AIMessage, ToolCallMessage, ToolResultMessage
 from medusa.telemetry.views import AgentTelemetryEvent
 from medusa.telemetry.tracker import ProductTelemetry
@@ -25,7 +26,7 @@ class Agent:
         self.registry = Registry([
         browser
         ])
-        self.browser_controller = BrowserController()
+        self.browser_controller = BrowserController(BrowserConfig())
         self.instructions = instructions
         self.browser = browser_choice
         self.agent_step = AgentStep()
@@ -60,7 +61,7 @@ class Agent:
                         desktop=self.desktop, browser=self.browser,
                         language=language, instructions=self.instructions
                     )
-                    context = ContextManager(block_limit=3, screenshot_limit=1, cache_query=True)
+                    context = ContextManager(block_limit=3, screenshot_limit=2, cache_query=False)
                     context.append(SystemMessage(content=system_prompt))
                     context.append(HumanMessage(content=query))
                     session_log.mark_ready()

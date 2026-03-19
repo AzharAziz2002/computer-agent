@@ -4,12 +4,14 @@ from medusa.logs.contextwindow import ContextLogger
 class ContextManager:
     """Manages message context — removes old turns, expires old screenshots."""
 
-    def __init__(self, block_limit: int = 4, screenshot_limit: int = 2, cache_query: bool = True):
+    def __init__(self, block_limit: int = 4, screenshot_limit: int = 2, cache_query: bool = True,
+                 cache_screenshot: bool = True):
         self._pinned = []    # SystemMessage + HumanMessage(query) — never removed
         self._turns = []     # list of lists — each turn = [msg, msg, ...]
         self.block_limit = block_limit
         self.screenshot_limit = screenshot_limit
         self.cache_query = cache_query
+        self.cache_screenshot = cache_screenshot  # mark latest screenshot ephemeral for prompt caching
         self._current_turn = []
         self._turn_count = 0
         self._logger = ContextLogger()
@@ -28,6 +30,8 @@ class ContextManager:
             self._turns.append(self._current_turn)
             self._current_turn = []
             self._trim()
+            if self.cache_screenshot:
+                self._mark_latest_screenshot()
             self._turn_count += 1
             self._logger.log_snapshot(self._turn_count, self.messages)
 
@@ -63,6 +67,22 @@ class ContextManager:
         if msg.tool_name == 'browser':
             return msg.image is not None or msg.content.startswith('Page:')
         return False
+
+    def _mark_latest_screenshot(self):
+        """Set cache_control=ephemeral on every screenshot currently in context.
+
+        With screenshot_limit=2 there are at most 2 screenshots alive at once.
+        System prompt and tools schema each use 1 of the 4 allowed Anthropic cache
+        breakpoints, leaving exactly 2 for screenshots — so both can be marked.
+
+        Keeping A cached when B arrives means the next request still gets a cache
+        hit on A's prefix before processing B, then a cache hit on B's prefix on
+        the turn after. Clearing A would throw that hit away for no benefit.
+        """
+        for turn in self._turns:
+            for msg in turn:
+                if self._is_screenshot(msg):
+                    msg.cache_control = {'type': 'ephemeral'}
 
     @property
     def messages(self) -> list:

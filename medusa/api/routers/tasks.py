@@ -45,7 +45,7 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
             api_key=os.getenv("CLAUDE_API_KEY"),
             thinking_budget=-1,
         )
-        agent = Agent(llm=llm, auto_minimize=True)
+        agent = Agent(llm=llm, auto_minimize=False)
         result = await agent.invoke(
             query,
             start_time=datetime.now(),

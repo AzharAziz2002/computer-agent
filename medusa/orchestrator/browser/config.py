@@ -16,6 +16,12 @@ class BrowserConfig:
     viewport_width: int = 1280
     viewport_height: int = 720
     upload_root: str | None = None   # defaults to ~/.medusa/uploads
+    relay_port: int = 18792          # extension relay WebSocket port
+    relay_host: str = '127.0.0.1'   # extension relay bind address
+    # Default browser profile: 'chrome' or 'edge' = use user's real browser
+    # via extension relay.  None = launch isolated Chromium (medusa profile).
+    # Reads from env MEDUSA_BROWSER_PROFILE if not set explicitly.
+    default_profile: str | None = field(default_factory=lambda: os.getenv('MEDUSA_BROWSER_PROFILE'))
     extra_args: list[str] = field(default_factory=list)
 
 

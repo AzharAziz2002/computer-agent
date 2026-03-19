@@ -72,6 +72,7 @@ class ToolResultMessage(BaseMessage):
     tool_name: str = ""
     image: Image|None = None
     mime_type: str = "image/png"
+    cache_control: dict|None = None  # e.g. {"type": "ephemeral"} — set by ContextManager
 
     def image_to_base64(self) -> str:
         buffered = BytesIO()

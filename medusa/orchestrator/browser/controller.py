@@ -5,6 +5,7 @@ the async browser tool function. Playwright async API runs directly
 in the same event loop.
 """
 
+import asyncio
 import re
 import uuid
 import logging
@@ -40,6 +41,7 @@ class BrowserController:
     def __init__(self, config: BrowserConfig | None = None):
         self.config = config or BrowserConfig()
         self._playwright = None
+        self._browser = None             # only used in relay mode (connect_over_cdp)
         self._context = None
         self._current_page = None
         self._snapshot_parser = SnapshotParser()
@@ -47,6 +49,8 @@ class BrowserController:
         self._refs_mode: str = 'role'      # 'role' or 'aria' (ai snapshot)
         self._ai_available: bool | None = None  # cache _snapshot_for_ai probe result
         self._is_running = False
+        self._is_relay_mode = False        # True when connected via extension relay
+        self._relay = None                 # ExtensionRelay instance
         self._console_messages: list[dict] = []
         # Stable tab IDs: t0, t1, t2... — never shift when tabs open/close
         self._page_ids: dict[str, object] = {}       # tab_id → Page
@@ -72,12 +76,69 @@ class BrowserController:
         return tab_id
 
     async def start(self, channel: str | None = None, user_data_dir: str | None = None,
-                    headless: bool | None = None) -> str:
+                    headless: bool | None = None, profile: str | None = None) -> str:
         if self._is_running:
             return 'Browser is already running.'
 
         from playwright.async_api import async_playwright
 
+        # Resolve profile: explicit arg > config default > None (local mode)
+        profile = profile or self.config.default_profile
+
+        # ── Relay mode: connect to user's real browser via extension ──
+        if profile in ('chrome', 'edge'):
+            from medusa.orchestrator.browser.relay import ExtensionRelay
+            from medusa.orchestrator.browser.constants import RELAY_AUTH_HEADER
+
+            self._relay = ExtensionRelay(
+                host=self.config.relay_host,
+                port=self.config.relay_port,
+            )
+            await self._relay.start()
+
+            # Wait for the Chrome extension to connect (up to 30 s)
+            print('[Browser] Waiting for Medusa extension to connect to relay...')
+            for _ in range(300):
+                if self._relay.extension_connected():
+                    break
+                await asyncio.sleep(0.1)
+            if not self._relay.extension_connected():
+                await self._relay.stop()
+                self._relay = None
+                raise RuntimeError(
+                    'Chrome extension did not connect after 30 s. '
+                    'Make sure the Medusa Browser Relay extension is installed '
+                    'and active in the Chrome/Edge profile you are using.'
+                )
+
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.connect_over_cdp(
+                self._relay.cdp_ws_url,
+                headers={RELAY_AUTH_HEADER: self._relay.auth_token},
+            )
+
+            # Get the default context (or create one)
+            if self._browser.contexts:
+                self._context = self._browser.contexts[0]
+            else:
+                self._context = await self._browser.new_context()
+
+            self._context.on('page', self._on_page_created)
+            self._is_relay_mode = True
+            self._is_running = True
+
+            # Create agent's first tab (goes through CDP → extension → grouped tab)
+            self._current_page = await self._context.new_page()
+            self._assign_tab_id(self._current_page)
+            self._setup_console_listener(self._current_page)
+
+            return (
+                f'Browser connected via extension relay ({profile}). '
+                f'Agent tab opened in your browser under the "Medusa" tab group. '
+                f'Using your saved logins and cookies.'
+            )
+
+        # ── Local mode: launch isolated browser ──────────────────────
         ch = channel or self.config.channel
         udd = user_data_dir or self.config.user_data_dir or default_user_data_dir()
         hl = headless if headless is not None else self.config.headless
@@ -115,23 +176,35 @@ class BrowserController:
     async def stop(self) -> str:
         if not self._is_running:
             return 'Browser is not running.'
+        was_relay = self._is_relay_mode
         try:
-            if self._context:
-                await self._context.close()
+            if self._is_relay_mode:
+                # Relay mode: disconnect browser, then stop relay
+                if self._browser:
+                    await self._browser.close()
+            else:
+                # Local mode: close persistent context
+                if self._context:
+                    await self._context.close()
             if self._playwright:
                 await self._playwright.stop()
+            if self._relay:
+                await self._relay.stop()
         except Exception as e:
             logger.warning(f'Error stopping browser: {e}')
         finally:
+            self._browser = None
             self._context = None
             self._playwright = None
+            self._relay = None
             self._current_page = None
             self._is_running = False
+            self._is_relay_mode = False
             self._snapshot_parser = SnapshotParser()
             self._console_messages = []
             self._page_ids.clear()
             self._page_id_reverse.clear()
-        return 'Browser stopped.'
+        return 'Browser stopped.' + (' (relay disconnected)' if was_relay else '')
 
     async def _ensure_running(self):
         if not self._is_running or not self._context:
@@ -144,6 +217,8 @@ class BrowserController:
             if pages:
                 self._current_page = pages[-1]
             else:
+                # Both modes: create a new page.
+                # In relay mode this goes through CDP → extension → new grouped tab.
                 self._current_page = await self._context.new_page()
         return self._current_page
 
@@ -173,9 +248,18 @@ class BrowserController:
     async def status(self) -> str:
         if not self._is_running:
             return 'Browser is not running.'
+        mode = 'relay' if self._is_relay_mode else 'local'
+        pages = self._context.pages if self._context else []
+        if not pages:
+            return f'Browser running ({mode}). No agent tabs open.'
         page = await self._ensure_page()
         title = await page.title()
-        return f'Browser running. Current page: {title} ({page.url})'
+        relay_info = ''
+        if self._is_relay_mode and self._relay:
+            ext_ok = self._relay.extension_connected()
+            relay_info = f' Extension: {"connected" if ext_ok else "disconnected"}.'
+        tab_count = len(pages)
+        return f'Browser running ({mode}, {tab_count} agent tab(s)). Current: {title} ({page.url}).{relay_info}'
 
     # ------------------------------------------------------------------ #
     # Navigation

@@ -9,3 +9,7 @@ DEFAULT_AI_SNAPSHOT_EFFICIENT_MAX_CHARS = 10_000
 
 # Snapshot depth limit for efficient mode
 DEFAULT_AI_SNAPSHOT_EFFICIENT_DEPTH = 6
+
+# Extension relay
+DEFAULT_RELAY_PORT = 18792
+RELAY_AUTH_HEADER = 'x-medusa-relay-token'

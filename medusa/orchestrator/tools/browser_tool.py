@@ -30,6 +30,7 @@ async def browser(action: str, **kwargs) -> str:
                 channel=kwargs.get('channel'),
                 user_data_dir=kwargs.get('user_data_dir'),
                 headless=kwargs.get('headless'),
+                profile=kwargs.get('profile'),
             )
         case 'stop':
             return await ctrl.stop()
