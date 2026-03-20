@@ -5,6 +5,7 @@ from medusa.llms.base import BaseChatLLM
 from dataclasses import dataclass
 from anthropic import Anthropic
 from pydantic import BaseModel
+from typing import Callable
 from httpx import Client
 import json
 
@@ -217,5 +218,64 @@ class ChatAnthropic(BaseChatLLM):
                 prompt_tokens=completion.usage.input_tokens,
                 completion_tokens=completion.usage.output_tokens,
                 total_tokens=completion.usage.input_tokens+completion.usage.output_tokens
+            )
+        )
+
+    def invoke_stream(self, messages: list[BaseMessage], tools: list[dict]|None=None, on_delta: Callable[[str], None]|None=None) -> ChatLLMResponse:
+        """Like invoke() but streams text deltas via on_delta callback as they arrive.
+
+        Uses the Anthropic streaming API. Tool calls and usage are resolved from
+        get_final_message() after the stream completes. Returns the same ChatLLMResponse
+        as invoke() so the agent loop works identically.
+        """
+        system_instruction, messages = self.serialize_messages(messages)
+        self._apply_cache_control(messages)
+        thinking_enabled = self.thinking_budget > -1
+        params = dict(
+            max_tokens=self.max_tokens,
+            model=self.model,
+            thinking=ThinkingConfigEnabledParam(type="enabled", budget_tokens=self.thinking_budget) if thinking_enabled else ThinkingConfigDisabledParam(type="disabled"),
+            system=[TextBlockParam(type="text", text=system_instruction, cache_control=CacheControlEphemeralParam(type="ephemeral", ttl='5m'))],
+            messages=messages,
+        )
+        if not thinking_enabled:
+            params["temperature"] = self.temperature
+        if tools:
+            params["tools"] = self._format_tools(tools)
+            params["tool_choice"] = {"type": "auto"}
+
+        with self.client.messages.stream(**params) as stream:
+            for text in stream.text_stream:
+                if text and on_delta:
+                    on_delta(text)
+            final = stream.get_final_message()
+
+        thinking_content, text_content = [], []
+        tool_calls = []
+        for block in final.content:
+            match block.type:
+                case "text":
+                    text_content.append(block.text)
+                case "thinking":
+                    thinking_content.append(block.thinking)
+                case "tool_use":
+                    tool_calls.append(ToolCall(
+                        id=block.id,
+                        name=block.name,
+                        arguments=block.input if isinstance(block.input, dict) else json.loads(block.input),
+                        raw=str(block)
+                    ))
+                case _:
+                    pass
+        content = "\n".join(text_content)
+        thinking = "\n".join(thinking_content)
+        return ChatLLMResponse(
+            thinking=thinking,
+            content=content,
+            tool_calls=tool_calls if tool_calls else None,
+            usage=ChatLLMUsage(
+                prompt_tokens=final.usage.input_tokens,
+                completion_tokens=final.usage.output_tokens,
+                total_tokens=final.usage.input_tokens + final.usage.output_tokens
             )
         )

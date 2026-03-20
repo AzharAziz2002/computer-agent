@@ -22,6 +22,13 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
         return
 
     task.status = "running"
+    loop = asyncio.get_event_loop()
+
+    def delta_callback(delta: str) -> None:
+        """Called from LLM worker thread for each streamed text chunk."""
+        frame = TaskUpdateFrame(task_id=task_id, type="delta", status="running", delta=delta).model_dump()
+        for q in list(task.queues):
+            loop.call_soon_threadsafe(q.put_nowait, frame)
 
     def step_callback(raw: dict) -> None:
         step_num = len(task.steps) + 1
@@ -35,7 +42,7 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
             isError=raw.get("isError", False),
         )
         task.steps.append(step.model_dump())
-        frame = TaskUpdateFrame(task_id=task_id, status="running", step=step).model_dump()
+        frame = TaskUpdateFrame(task_id=task_id, type="step", status="running", step=step).model_dump()
         for q in task.queues:
             q.put_nowait(frame)
 
@@ -51,6 +58,7 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
             start_time=datetime.now(),
             step_callback=step_callback,
             stop_event=task.stop_event,
+            delta_callback=delta_callback,
         )
 
         if result.is_done:
@@ -67,6 +75,7 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
     finally:
         final_frame = TaskUpdateFrame(
             task_id=task_id,
+            type="done",
             status=task.status,
             result=task.result,
             error=task.error,

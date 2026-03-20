@@ -26,7 +26,9 @@ class AgentStepModel(BaseModel):
 
 class TaskUpdateFrame(BaseModel):
     task_id: str
-    status: str  # "running" | "done" | "failed"
+    type: str = "step"   # "delta" | "step" | "done" | "error"
+    status: str          # "running" | "done" | "failed"
+    delta: str | None = None
     step: AgentStepModel | None = None
     result: str | None = None
     error: str | None = None

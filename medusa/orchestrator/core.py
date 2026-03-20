@@ -39,7 +39,7 @@ class Agent:
         self.desktop = Desktop()
         self.console = Console()
 
-    async def invoke(self, query: str, start_time=None, step_callback=None, stop_event=None) -> AgentResult:
+    async def invoke(self, query: str, start_time=None, step_callback=None, stop_event=None, delta_callback=None) -> AgentResult:
         """Invoke the agent with a query."""
         if query.strip() == '':
             return AgentResult(is_done=False, error="Query is empty. Please provide a valid query.")
@@ -75,9 +75,15 @@ class Agent:
                         for consecutive_failures in range(1, self.max_consecutive_failures + 1):
                             try:
                                 print(f"[DEBUG] Calling LLM (attempt {consecutive_failures})...")
-                                llm_response = await asyncio.to_thread(
-                                    self.llm.invoke, context.messages, tools=tools_schema
-                                )
+                                if delta_callback and hasattr(self.llm, 'invoke_stream'):
+                                    llm_response = await asyncio.to_thread(
+                                        self.llm.invoke_stream, context.messages,
+                                        tools=tools_schema, on_delta=delta_callback
+                                    )
+                                else:
+                                    llm_response = await asyncio.to_thread(
+                                        self.llm.invoke, context.messages, tools=tools_schema
+                                    )
                                 print(f"[DEBUG] LLM returned. tool_calls={len(llm_response.tool_calls) if llm_response.tool_calls else 0}, content_len={len(llm_response.content) if llm_response.content else 0}")
                                 break
                             except Exception as e:
