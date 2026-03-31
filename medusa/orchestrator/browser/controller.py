@@ -90,6 +90,14 @@ class BrowserController:
             from medusa.orchestrator.browser.relay import ExtensionRelay
             from medusa.orchestrator.browser.constants import RELAY_AUTH_HEADER
 
+            # Clean up leftover relay from a failed previous start attempt
+            if self._relay is not None:
+                try:
+                    await self._relay.stop()
+                except Exception:
+                    pass
+                self._relay = None
+
             self._relay = ExtensionRelay(
                 host=self.config.relay_host,
                 port=self.config.relay_port,
@@ -399,6 +407,12 @@ class BrowserController:
     ) -> Image.Image:
         page = await self._ensure_page()
         fmt = 'jpeg' if img_type == 'jpeg' else 'png'
+
+        # Guard: no_viewport=True mode or minimized window can leave the
+        # viewport at 0×0, which causes CDP "Cannot take screenshot with 0 width".
+        vp = page.viewport_size
+        if not vp or vp.get('width', 0) == 0:
+            await page.set_viewport_size({'width': self.RENDER_W, 'height': self.RENDER_H})
 
         if ref:
             locator, _ = self._resolve_locator(page, ref, None)

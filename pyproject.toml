@@ -35,4 +35,11 @@ dependencies = [
     "fastapi[standard]>=0.129.0",
     "uvicorn[standard]>=0.41.0",
     "playwright>=1.49.0",
+    # MCP connector system
+    "mcp[cli]>=1.0.0",
+    "cryptography>=44.0.0",
+    "keyring>=25.0.0",
+    "httpx>=0.28.0",
+    # Web tools (search + fetch)
+    "readability-lxml>=0.8.1",
 ]

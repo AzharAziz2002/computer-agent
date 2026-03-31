@@ -73,8 +73,9 @@ class ContextLogger:
 
             elif isinstance(msg, ToolResultMessage):
                 has_image = "Yes" if msg.image is not None else "No"
+                cached = " · **CACHED**" if msg.cache_control else ""
                 parts.append(
-                    f"**Tool:** `{msg.tool_name}` · **ID:** `{msg.tool_call_id}` · **Image:** {has_image}\n\n"
+                    f"**Tool:** `{msg.tool_name}` · **ID:** `{msg.tool_call_id}` · **Image:** {has_image}{cached}\n\n"
                 )
                 content = msg.content
                 if content.startswith('<desktop_state>'):

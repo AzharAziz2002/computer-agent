@@ -87,15 +87,24 @@ function setGlobalBadge(kind) {
 
 async function ensureMedusaTabGroup(tabId) {
   /**
-   * Add a tab to the "Medusa" tab group.  Creates the group on first use.
+   * Add a tab to the "Medusa" tab group.  Reuses an existing group if one
+   * is already open (e.g. from a previous session), creates on first use.
    */
   try {
     if (medusaGroupId !== null) {
-      // Verify group still exists
+      // Verify cached group still exists
       try {
         await chrome.tabGroups.get(medusaGroupId)
       } catch {
         medusaGroupId = null
+      }
+    }
+
+    // Search for an existing "Medusa" group we lost track of (relay reconnect)
+    if (medusaGroupId === null) {
+      const existing = await chrome.tabGroups.query({ title: TAB_GROUP_TITLE })
+      if (existing.length > 0) {
+        medusaGroupId = existing[0].id
       }
     }
 

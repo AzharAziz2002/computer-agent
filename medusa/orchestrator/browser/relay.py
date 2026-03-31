@@ -174,15 +174,23 @@ class ExtensionRelay:
                 fut.set_exception(Exception('relay stopping'))
         self._pending.clear()
 
-        # Stop uvicorn
+        # Stop uvicorn and release the port
         if hasattr(self, '_uvicorn_server'):
             self._uvicorn_server.should_exit = True
+            # Force-close the listening sockets so the port is freed immediately.
+            # uvicorn stores asyncio.Server objects in .servers — closing them
+            # releases the bound port without waiting for TIME_WAIT.
+            for srv in getattr(self._uvicorn_server, 'servers', []) or []:
+                srv.close()
         if self._server_task:
-            self._server_task.cancel()
             try:
-                await self._server_task
-            except (asyncio.CancelledError, Exception):
-                pass
+                await asyncio.wait_for(self._server_task, timeout=3.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                self._server_task.cancel()
+                try:
+                    await self._server_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             self._server_task = None
 
         logger.info('Extension relay stopped')

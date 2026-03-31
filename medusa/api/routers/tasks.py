@@ -9,13 +9,15 @@ from medusa.orchestrator.core import Agent
 from medusa.llms.anthropic import ChatAnthropic
 from medusa.api.models import StartTaskRequest, StartTaskResponse, AgentStepModel, AgentActionModel, TaskUpdateFrame
 from medusa.api.state import store
+from medusa.sessions import session_store
+from medusa.api import app as app_module
 
 load_dotenv()
 
 router = APIRouter()
 
 
-async def _run_agent(task_id: str, query: str, model: str) -> None:
+async def _run_agent(task_id: str, session_id: str, query: str, model: str) -> None:
     """Runs Agent.invoke() as an async task — notifies WebSocket clients via asyncio queues."""
     task = store.get(task_id)
     if not task:
@@ -46,13 +48,24 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
         for q in task.queues:
             q.put_nowait(frame)
 
+        # Persist step to transcript
+        session_store.append(session_id, {
+            "type": "step",
+            "stepNumber": step.stepNumber,
+            "thought": step.thought,
+            "action": step.action.model_dump() if step.action else None,
+            "observation": step.observation,
+            "isError": step.isError,
+            "timestamp": datetime.now().isoformat(),
+        })
+
     try:
         llm = ChatAnthropic(
             model=model,
             api_key=os.getenv("CLAUDE_API_KEY"),
             thinking_budget=-1,
         )
-        agent = Agent(llm=llm, auto_minimize=False)
+        agent = Agent(llm=llm, auto_minimize=False, mcp_manager=app_module.mcp_manager)
         result = await agent.invoke(
             query,
             start_time=datetime.now(),
@@ -64,13 +77,31 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
         if result.is_done:
             task.status = "done"
             task.result = result.content
+            session_store.append(session_id, {
+                "type": "result",
+                "content": result.content,
+                "timestamp": datetime.now().isoformat(),
+            })
+            session_store.update(session_id, status="done", preview=result.content[:100] if result.content else None)
         else:
             task.status = "failed"
             task.error = result.error
+            session_store.append(session_id, {
+                "type": "error",
+                "content": result.error,
+                "timestamp": datetime.now().isoformat(),
+            })
+            session_store.update(session_id, status="failed")
 
     except Exception as e:
         task.status = "failed"
         task.error = str(e)
+        session_store.append(session_id, {
+            "type": "error",
+            "content": str(e),
+            "timestamp": datetime.now().isoformat(),
+        })
+        session_store.update(session_id, status="failed")
 
     finally:
         final_frame = TaskUpdateFrame(
@@ -89,9 +120,24 @@ async def _run_agent(task_id: str, query: str, model: str) -> None:
 @router.post("/api/tasks", response_model=StartTaskResponse)
 async def start_task(req: StartTaskRequest):
     task_id = str(uuid4())
+    session_id = req.session_id or str(uuid4())
+
+    # Create or update session
+    if not req.session_id:
+        session_store.create(session_id, req.query, model=req.model)
+    else:
+        session_store.update(session_id, status="running")
+
+    # Persist user message to transcript
+    session_store.append(session_id, {
+        "type": "user",
+        "content": req.query,
+        "timestamp": datetime.now().isoformat(),
+    })
+
     store.create(task_id, req.query)
-    asyncio.create_task(_run_agent(task_id, req.query, req.model))
-    return StartTaskResponse(task_id=task_id)
+    asyncio.create_task(_run_agent(task_id, session_id, req.query, req.model))
+    return StartTaskResponse(task_id=task_id, session_id=session_id)
 
 
 @router.delete("/api/tasks/{task_id}", status_code=204)

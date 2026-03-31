@@ -19,7 +19,6 @@ class AgentTelemetryEvent(BaseTelemetryEvent):
     steps: int
     model:str
     provider:str
-    use_vision:bool=False
     answer: str | None=None
     error: str | None=None
     event_name: str = "agent_event"

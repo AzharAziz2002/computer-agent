@@ -1,19 +1,37 @@
+# Secrets & credentials
 .env
+.credentials/
 
-.venv 
-tools/__pycache__/
-__pycache__/
+# Python
+.venv/
+**/__pycache__/
 *.pyc
-test.py
-uv.lock
-.claude
-.claude/
-observe.txt
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
 
-
+# Runtime data
+.sessions/
+.memories/
 /LOGS/
+
+# Dev / scratch files
+test.py
+observe.txt
+uv.lock
+
+# Claude Code
+.claude/
+.claudeignore
+
+# Project-specific ignored dirs
 SUMMARY/
 tests/
 TODO/
-.claudeignore
 Archive/Discarded_Results/
+Archive/Results/

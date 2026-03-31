@@ -4,10 +4,12 @@ from pydantic import BaseModel
 class StartTaskRequest(BaseModel):
     query: str
     model: str = "claude-sonnet-4-6"
+    session_id: str | None = None  # If set, append to existing session; else create new
 
 
 class StartTaskResponse(BaseModel):
     task_id: str
+    session_id: str
 
 
 class AgentActionModel(BaseModel):

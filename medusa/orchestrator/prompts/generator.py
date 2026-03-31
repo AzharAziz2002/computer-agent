@@ -1,4 +1,4 @@
-from medusa.orchestrator.desktop.state import DesktopState, Browser
+from medusa.orchestrator.desktop.state import DesktopState
 from medusa.orchestrator.desktop.controller import Desktop
 from importlib.resources import files
 from datetime import datetime
@@ -10,7 +10,7 @@ INCLUDE_SOUL = False
 
 class Prompt:
     @staticmethod
-    def system_prompt(desktop:Desktop,browser: Browser,language: str,instructions: list[str]=[]) -> str:
+    def system_prompt(desktop:Desktop, language: str, instructions: list[str]=[]) -> str:
         """Build system prompt (tools are now passed via API, not in prompt)."""
         width, height = pg.size()
         format_vars = {
@@ -19,7 +19,6 @@ class Prompt:
             'download_directory': Path.home().joinpath('Downloads').as_posix(),
             'os': desktop.get_windows_version(),
             'language': language,
-            'browser': browser.value,
             'home_dir': Path.home().as_posix(),
             'user': f"{getuser()} ({desktop.get_user_account_type()})",
             'resolution': f'Primary Monitor ({width}x{height}) with DPI Scale: {desktop.get_dpi_scaling()}',

@@ -1,6 +1,7 @@
 from anthropic.types import Message,MessageParam,ImageBlockParam,Base64ImageSourceParam,TextBlockParam,CacheControlEphemeralParam,ThinkingConfigDisabledParam,ThinkingConfigEnabledParam,ToolUseBlockParam,ToolResultBlockParam
 from medusa.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolCallMessage, ToolResultMessage
 from medusa.llms.views import ChatLLMResponse, ChatLLMUsage, ToolCall
+from medusa.orchestrator.context.constants import USER_QUERY_CACHE
 from medusa.llms.base import BaseChatLLM
 from dataclasses import dataclass
 from anthropic import Anthropic
@@ -174,7 +175,7 @@ class ChatAnthropic(BaseChatLLM):
     def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None = None):
         """Invoke Anthropic API with optional native tool calling."""
         system_instruction, messages = self.serialize_messages(messages)
-        self._apply_cache_control(messages)
+        self._apply_cache_control(messages, cache_query=USER_QUERY_CACHE)
         thinking_enabled = self.thinking_budget > -1
         params = dict(
             max_tokens=self.max_tokens,
@@ -229,7 +230,7 @@ class ChatAnthropic(BaseChatLLM):
         as invoke() so the agent loop works identically.
         """
         system_instruction, messages = self.serialize_messages(messages)
-        self._apply_cache_control(messages)
+        self._apply_cache_control(messages, cache_query=USER_QUERY_CACHE)
         thinking_enabled = self.thinking_budget > -1
         params = dict(
             max_tokens=self.max_tokens,

@@ -8,7 +8,44 @@ Two formats are supported:
 """
 
 import re
+from urllib.parse import urlparse
 from medusa.orchestrator.browser.state import ElementRef
+
+# ── URL filtering ─────────────────────────────────────────────────────
+
+MAX_URL_LENGTH = 150      # truncate regular URLs longer than this
+AD_URL_LENGTH = 60        # stricter limit for ad/tracking URLs
+
+# Ad / tracking domains — truncated aggressively (domain + short path)
+AD_DOMAINS = {
+    'googleadservices.com', 'doubleclick.net', 'googlesyndication.com',
+    'adservice.google.com', 'pagead2.googlesyndication.com',
+}
+
+# Pattern: '  - /url: <url>'
+_URL_LINE_RE = re.compile(r'^(\s*-\s*/url:\s*)(.+)$')
+
+
+def _filter_url_line(line: str) -> str | None:
+    """Truncate /url: text-node lines. Ad URLs get a stricter limit."""
+    m = _URL_LINE_RE.match(line)
+    if not m:
+        return line
+    prefix, url = m.group(1), m.group(2).strip()
+
+    # Pick truncation limit — stricter for ad/tracking domains
+    limit = MAX_URL_LENGTH
+    try:
+        host = urlparse(url).hostname or ''
+        if any(host == ad or host.endswith('.' + ad) for ad in AD_DOMAINS):
+            limit = AD_URL_LENGTH
+    except Exception:
+        pass
+
+    if len(url) > limit:
+        url = url[:limit] + '...'
+    return f'{prefix}{url}'
+
 
 # Roles that get [ref=] and can be interacted with (click, type, etc.)
 INTERACTIVE_ROLES = {
@@ -232,10 +269,12 @@ class SnapshotParser:
         for line in lines:
             parsed = _match_snapshot_line(line, max_depth)
             if not parsed:
-                # Non-matching lines (text nodes, etc.) — depth-check, then pass through
+                # Non-matching lines (text nodes, /url: lines, etc.) — depth-check, filter, pass through
                 if max_depth is not None and _get_indent_level(line) > max_depth:
                     continue
-                result.append(line)
+                filtered = _filter_url_line(line)
+                if filtered is not None:
+                    result.append(filtered)
                 continue
 
             role = parsed['role']
@@ -366,7 +405,9 @@ class AiSnapshotParser:
 
             parsed = _match_snapshot_line(line)  # depth already checked above
             if not parsed:
-                result.append(line)
+                filtered = _filter_url_line(line)
+                if filtered is not None:
+                    result.append(filtered)
                 continue
 
             role = parsed['role']

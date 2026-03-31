@@ -19,7 +19,7 @@ if __name__ == "__main__":
         api_key=os.getenv("CLAUDE_API_KEY"),
         thinking_budget=-1,
     )
-    agent = Agent(llm=llm, use_vision=False, auto_minimize=True)
+    agent = Agent(llm=llm, auto_minimize=True)
     agent.print_response(prompt, start_time=start_time)
 
 # import asyncio

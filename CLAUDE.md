@@ -55,15 +55,23 @@ This document is for coding agents that need to understand project structure, mo
 - `tree/state.py`: Node/state models for interactive/scroll/text elements.
 - `watchdog/observer.py`: UIA event thread (focus, structure, property change listeners).
 - `prompts/`: Prompt templates + generator for system and observation messages.
-- `context.py`: Context window manager (block limit, screenshot deduplication, cache).
+- `context/`: Context window management package.
+  - `constants.py`: Toggleable settings (block removal, screenshot removal, cache breakpoints).
+  - `manager.py`: `ContextManager` — block trimming, screenshot expiry, sticky cache marking.
 
 ### `medusa/api` — FastAPI backend for frontend integration
-- `app.py`: FastAPI app with CORS middleware, mounts `tasks` and `screenshot` routers.
+- `app.py`: FastAPI app with CORS middleware, lifespan (startup/shutdown for MCP plugin system), mounts all routers. Creates singleton `MCPManager` shared by connectors + tasks routers.
 - `routers/tasks.py`: REST + WebSocket endpoints.
-  - `POST /api/tasks` — start a new agent task (runs `Agent.invoke` in a thread pool).
+  - `POST /api/tasks` — start a new agent task (runs `Agent.invoke` in a thread pool). Passes `mcp_manager` to Agent.
   - `DELETE /api/tasks/{task_id}` — stop a running task.
   - `WS /api/ws/{task_id}` — stream step updates to frontend as JSON frames (`TaskUpdateFrame`).
 - `routers/screenshot.py`: `GET /api/screenshot` — returns a live JPEG screenshot of the desktop.
+- `routers/sessions.py`: Session CRUD (list, get, delete).
+- `routers/connectors.py`: MCP connector management.
+  - `GET /api/connectors` — list all connectors with connection status.
+  - `POST /api/connectors/{id}/connect` — initiate connection (OAuth or API key).
+  - `DELETE /api/connectors/{id}` — disconnect + remove credentials.
+  - `GET /api/connectors/{id}/tools` — list tools from connected MCP server.
 - `models.py`: Pydantic request/response models (`StartTaskRequest`, `StartTaskResponse`, `AgentStepModel`, `TaskUpdateFrame`).
 - `state.py`: In-memory task store (task status, steps, queues for WS broadcast).
 - `server.py` (project root): `uvicorn` entry point — `python server.py` starts on `http://127.0.0.1:8000`.
@@ -93,6 +101,12 @@ This document is for coding agents that need to understand project structure, mo
 - Tool decorator and schema preprocessing.
 - Converts Pydantic models into provider-agnostic JSON schema consumed by registry and LLM adapters.
 
+### `medusa/plugins` — MCP connector system
+- `catalog.py`: Static registry of supported connectors (`ConnectorDef` dataclass, `CATALOG` dict). Each entry maps a frontend connector ID to its auth type, MCP server command, and env variable mapping. Add new connectors by adding entries to `CATALOG`.
+- `credentials.py`: Encrypted credential storage. Master key in OS keyring (Windows Credential Manager via `keyring`), credentials encrypted with Fernet (AES-128-CBC + HMAC) to `.credentials/connectors.enc`. Never stores credentials in plaintext on disk.
+- `oauth.py`: Ephemeral OAuth callback server. Starts on random port, captures authorization code, exchanges for tokens. Validates CSRF state parameter.
+- `manager.py`: MCP server lifecycle manager (`MCPManager`). Spawns MCP server subprocesses via Python MCP SDK (`stdio_client`), maintains persistent `ClientSession` connections, exposes merged tool list. Tool names prefixed with `{connector_id}__` to avoid collisions.
+
 ### `medusa/telemetry`
 - Optional PostHog integration.
 - Controlled by `ANONYMIZED_TELEMETRY` env setting.
@@ -108,7 +122,7 @@ This document is for coding agents that need to understand project structure, mo
 
 ## Tooling Surface (Agent-Visible)
 
-Registered in `Agent.registry`:
+Registered in `Agent.registry` (built-in tools):
 - `desktop`: unified desktop actions (`click`, `type`, `scroll`, `drag`, `move`, `shortcut`, `hold_key`, `wait`, `multi_select`, `multi_edit`, `screenshot`) via pyautogui
 - `browser`: browser automation via Playwright (navigate, click, type, screenshot)
 - `app`: app launch/switch/resize
@@ -116,6 +130,11 @@ Registered in `Agent.registry`:
 - `memory`: persistent markdown memory files in `.memories`
 - `scrape`: visible browser page content via accessibility tree
 - `done`: terminal tool to finalize answer
+
+**MCP connector tools** (dynamic, from connected MCP servers):
+- When connectors are connected via the Connectors page, their MCP tools are merged into the agent's tool schema at task start.
+- MCP tool names are prefixed: `{connector_id}__{tool_name}` (e.g. `github__list_repos`).
+- In the agent loop (`core.py`), tool calls with `__` in the name are routed to `MCPManager.call_tool()` instead of the built-in registry.
 
 
 ## Abandoned / Dormant Concepts
@@ -132,11 +151,13 @@ These modules exist in the codebase but are **not active** in the current agent 
 
 ## Configuration and Environment
 
-- `.env` is expected for API credentials (for example `CLAUDE_API_KEY`).
+- `.env` is expected for API credentials (for example `CLAUDE_API_KEY`). Also holds OAuth client IDs/secrets for MCP connectors (e.g. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+- `.credentials/connectors.enc` — encrypted connector credentials (Fernet). Master key stored in OS keyring. **Never committed** (in `.gitignore`).
 - Core dependencies in `pyproject.toml` include:
   - desktop automation (`pyautogui`, `pywin32`, `uiautomation`, `comtypes`),
   - LLM SDKs (Anthropic, Google, OpenAI, Groq, Ollama, Mistral, Cerebras),
   - API server (`fastapi`, `uvicorn`),
+  - MCP connector system (`mcp`, `cryptography`, `keyring`, `httpx`),
   - infra (`pydantic`, `rapidfuzz`, `markdownify`, `posthog`).
 
 
@@ -188,6 +209,11 @@ tree /f /a
   - register in `medusa/api/app.py`
   - add models in `medusa/api/models.py`
 
+- **Add a new MCP connector:**
+  - Add entry to `CATALOG` in `medusa/plugins/catalog.py` with auth type, MCP command, env mapping
+  - If OAuth: set `oauth_client_id_env` / `oauth_client_secret_env` and add client ID/secret to `.env`
+  - No other code changes needed — the connector appears in `GET /api/connectors` automatically
+
 
 ## API Contract (for frontend)
 
@@ -195,16 +221,25 @@ Base URL: `http://127.0.0.1:8000`
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/tasks` | Start agent task. Body: `{query, model}`. Returns `{task_id}`. |
+| `POST` | `/api/tasks` | Start agent task. Body: `{query, model, session_id?}`. Returns `{task_id, session_id}`. |
 | `DELETE` | `/api/tasks/{task_id}` | Stop a running task. |
 | `WS` | `/api/ws/{task_id}` | Stream step updates. Each frame is a `TaskUpdateFrame` JSON object. |
 | `GET` | `/api/screenshot` | Returns live desktop screenshot as JPEG. |
+| `GET` | `/api/sessions` | List all sessions. |
+| `GET` | `/api/sessions/{id}` | Get session metadata + transcript. |
+| `DELETE` | `/api/sessions/{id}` | Delete session. |
+| `GET` | `/api/connectors` | List all connectors with connection status + tools. |
+| `POST` | `/api/connectors/{id}/connect` | Connect (API key in body, or returns OAuth URL). |
+| `DELETE` | `/api/connectors/{id}` | Disconnect + remove credentials. |
+| `GET` | `/api/connectors/{id}/tools` | List tools from connected MCP server. |
 
 `TaskUpdateFrame` shape:
 ```json
 {
   "task_id": "...",
+  "type": "delta | step | done",
   "status": "running | done | failed",
+  "delta": "...",
   "step": {
     "id": "...",
     "stepNumber": 1,

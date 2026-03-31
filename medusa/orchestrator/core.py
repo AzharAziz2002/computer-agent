@@ -1,4 +1,5 @@
-from medusa.orchestrator.tools.service import desktop, shell, done, app, browser
+from medusa.orchestrator.tools.service import desktop, shell, done, app, browser, web_search, web_fetch
+from medusa.orchestrator.registry.views import ToolResult
 from medusa.orchestrator.browser.controller import BrowserController
 from medusa.orchestrator.browser.config import BrowserConfig
 from medusa.messages import SystemMessage, HumanMessage, AIMessage, ToolCallMessage, ToolResultMessage
@@ -8,7 +9,6 @@ from medusa.orchestrator.views import AgentResult, AgentStep
 from medusa.orchestrator.registry.core import Registry
 from medusa.orchestrator.watchdog.observer import WatchDog
 from medusa.orchestrator.desktop.controller import Desktop
-from medusa.orchestrator.desktop.state import Browser
 from medusa.orchestrator.prompts.generator import Prompt
 from medusa.orchestrator.context import ContextManager
 from medusa.logs.logger import SessionLogger
@@ -20,22 +20,20 @@ import traceback
 import asyncio
 
 class Agent:
-    def __init__(self, instructions: list[str]=[], browser_choice: Browser=Browser.EDGE, llm: BaseChatLLM=None, max_consecutive_failures: int=3, use_vision: bool=False, auto_minimize: bool=False, enable_telemetry: bool=False):
-        self.name = 'Medusa'
-        self.description = 'An agent that can interact with GUI elements on Windows OS'
+    def __init__(self, instructions: list[str]=[], llm: BaseChatLLM=None, max_consecutive_failures: int=3, auto_minimize: bool=False, enable_telemetry: bool=False, enable_watchdog: bool=False, mcp_manager=None):
         self.registry = Registry([
-        browser
+        browser, web_search, web_fetch
         ])
         self.browser_controller = BrowserController(BrowserConfig())
         self.instructions = instructions
-        self.browser = browser_choice
         self.agent_step = AgentStep()
         self.max_consecutive_failures = max_consecutive_failures
         self.auto_minimize = auto_minimize
-        self.use_vision = use_vision
+        self.enable_watchdog = enable_watchdog
         self.llm = llm
+        self.mcp_manager = mcp_manager
         self.telemetry = ProductTelemetry() if enable_telemetry else None
-        self.watchdog = WatchDog()
+        self.watchdog = WatchDog() if enable_watchdog else None
         self.desktop = Desktop()
         self.console = Console()
 
@@ -52,16 +50,20 @@ class Agent:
         error = None
         try:
             with (self.desktop.auto_minimize() if self.auto_minimize else nullcontext()):
-                self.watchdog.set_focus_callback(self.desktop.tree._on_focus_change)
-                self.watchdog.set_property_callback(self.desktop.tree._on_property_change)
-                with self.watchdog:
+                if self.watchdog:
+                    self.watchdog.set_focus_callback(self.desktop.tree._on_focus_change)
+                    self.watchdog.set_property_callback(self.desktop.tree._on_property_change)
+                with self.watchdog if self.watchdog else nullcontext():
                     language = self.desktop.get_default_language()
                     tools_schema = self.registry.get_tools_schema()
+                    # Merge tools from connected MCP servers
+                    if self.mcp_manager:
+                        tools_schema.extend(self.mcp_manager.get_all_tools())
                     system_prompt = Prompt.system_prompt(
-                        desktop=self.desktop, browser=self.browser,
+                        desktop=self.desktop,
                         language=language, instructions=self.instructions
                     )
-                    context = ContextManager(block_limit=3, screenshot_limit=2, cache_query=False)
+                    context = ContextManager()
                     context.append(SystemMessage(content=system_prompt))
                     context.append(HumanMessage(content=query))
                     session_log.mark_ready()
@@ -93,7 +95,6 @@ class Agent:
                                         self.telemetry.capture(AgentTelemetryEvent(
                                             query=query, error=str(e),
                                             steps=self.agent_step.steps,
-                                            use_vision=self.use_vision,
                                             model=self.llm.model_name,
                                             provider=self.llm.provider,
                                             is_success=False
@@ -154,10 +155,21 @@ class Agent:
                                 is_done = True
                                 break
                             else:
-                                action_response = await self.registry.execute(
-                                    tool_name=tool_name, desktop=self.desktop,
-                                    browser=self.browser_controller, **tool_args
-                                )
+                                # Route MCP-prefixed tools to the MCP manager
+                                if '__' in tool_name and self.mcp_manager:
+                                    connector_id, original_name = tool_name.split('__', 1)
+                                    try:
+                                        result_text = await self.mcp_manager.call_tool(
+                                            connector_id, original_name, tool_args
+                                        )
+                                        action_response = ToolResult(is_success=True, content=result_text)
+                                    except Exception as mcp_err:
+                                        action_response = ToolResult(is_success=False, error=str(mcp_err))
+                                else:
+                                    action_response = await self.registry.execute(
+                                        tool_name=tool_name, desktop=self.desktop,
+                                        browser=self.browser_controller, **tool_args
+                                    )
                                 result_text = action_response.content if action_response.is_success else action_response.error
                                 print(f"[DEBUG] Tool result: is_success={action_response.is_success}, text='{(result_text or '')[:150]}'")
                                 if not action_response.is_success:
@@ -196,7 +208,6 @@ class Agent:
                         query=query,
                         steps=self.agent_step.steps,
                         answer=answer,
-                        use_vision=self.use_vision,
                         model=self.llm.model_name,
                         provider=self.llm.provider,
                         is_success=True
@@ -214,6 +225,8 @@ class Agent:
         finally:
             print(f"[DEBUG] === FINALLY cleanup === error={error}")
             self.agent_step.reset()
+            if self.browser_controller._is_running and self.browser_controller._is_relay_mode:
+                await self.browser_controller.stop()
             print("[DEBUG] Finalizing session log...")
             session_log.finalize(self.llm.model_name)
             print("[DEBUG] Session log finalized.")
