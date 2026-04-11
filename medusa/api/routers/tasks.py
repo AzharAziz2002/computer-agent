@@ -1,10 +1,10 @@
-import os
 import asyncio
 from uuid import uuid4
 from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 
+from medusa.auth import resolve_anthropic_auth
 from medusa.orchestrator.core import Agent
 from medusa.llms.anthropic import ChatAnthropic
 from medusa.api.models import StartTaskRequest, StartTaskResponse, AgentStepModel, AgentActionModel, TaskUpdateFrame
@@ -60,9 +60,11 @@ async def _run_agent(task_id: str, session_id: str, query: str, model: str) -> N
         })
 
     try:
+        auth = resolve_anthropic_auth()
         llm = ChatAnthropic(
             model=model,
-            api_key=os.getenv("CLAUDE_API_KEY"),
+            api_key=auth.api_key,
+            auth_token=auth.auth_token,
             thinking_budget=-1,
         )
         agent = Agent(llm=llm, auto_minimize=False, mcp_manager=app_module.mcp_manager)

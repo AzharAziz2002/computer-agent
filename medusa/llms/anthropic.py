@@ -12,7 +12,7 @@ import json
 
 @dataclass
 class ChatAnthropic(BaseChatLLM):
-    def __init__(self, model: str, api_key: str, thinking_budget:int=-1, temperature: float = 0.7, max_tokens: int = 8192, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
+    def __init__(self, model: str, api_key: str | None = None, thinking_budget:int=-1, temperature: float = 0.7, max_tokens: int = 8192, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
         self.model = model
         self.api_key = api_key
         self.auth_token = auth_token
@@ -31,16 +31,31 @@ class ChatAnthropic(BaseChatLLM):
     @property
     def client(self):
         if self._client is None:
-            self._client = Anthropic(**{
-                "api_key": self.api_key,
-                "auth_token": self.auth_token,
+            client_kwargs = {
                 "base_url": self.base_url,
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
                 "default_headers": self.default_headers,
                 "default_query": self.default_query,
                 "http_client": self.http_client,
-            })
+            }
+            if self.api_key:
+                client_kwargs["api_key"] = self.api_key
+            if self.auth_token:
+                client_kwargs["auth_token"] = self.auth_token
+                # Claude Code OAuth tokens (sk-ant-oat*) require opt-in beta headers.
+                # Without oauth-2025-04-20 the API returns 401 "OAuth authentication is
+                # currently not supported." (verified against OpenClaw transport layer).
+                if "sk-ant-oat" in self.auth_token:
+                    oauth_headers: dict[str, str] = {
+                        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                        "user-agent": "claude-cli/2.1.75",
+                        "x-app": "cli",
+                    }
+                    if self.default_headers:
+                        oauth_headers.update(self.default_headers)
+                    client_kwargs["default_headers"] = oauth_headers
+            self._client = Anthropic(**client_kwargs)
         return self._client
 
     @property

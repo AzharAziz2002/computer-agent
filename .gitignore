@@ -28,6 +28,8 @@ uv.lock
 # Claude Code
 .claude/
 .claudeignore
+# Codex
+.codex
 
 # Project-specific ignored dirs
 SUMMARY/
@@ -35,3 +37,5 @@ tests/
 TODO/
 Archive/Discarded_Results/
 Archive/Results/
+progress/
+

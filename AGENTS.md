@@ -17,6 +17,13 @@ This document is for coding agents that need to understand project structure, mo
 - Python: `>=3.13` (managed with `uv`)
 - Entry flow: `main.py` -> `medusa.orchestrator.core.Agent`
 
+## WSL Execution Note
+
+- When working from WSL in this repository, do not assume `uv` or `python` is available in the Linux environment.
+- Use the Windows virtualenv interpreter directly: `./.venv/Scripts/python.exe`
+- Prefer commands such as `./.venv/Scripts/python.exe main.py` and `./.venv/Scripts/python.exe tests/test_tool_schemas.py`
+- Anthropic auth now supports repo-local token storage in `.credentials/anthropic.json` and automatic Claude Code credential reuse from `~/.claude/.credentials.json` when no explicit `auth_token` is supplied.
+
 
 ## Runtime Architecture
 
@@ -101,6 +108,14 @@ uv sync
 uv run python main.py
 uv run python tests/test_tool_schemas.py
 tree /f /a
+```
+
+From WSL, use:
+
+```bash
+./.venv/Scripts/python.exe main.py
+./.venv/Scripts/python.exe tests/test_tool_schemas.py
+./.venv/Scripts/python.exe manage_anthropic_auth.py set-token
 ```
 
 ## Where To Change Code

@@ -1,7 +1,7 @@
 import sys
-import os
 from datetime import datetime
 from dotenv import load_dotenv
+from medusa.auth import resolve_anthropic_auth
 from medusa.orchestrator.core import Agent
 from medusa.llms.anthropic import ChatAnthropic
 
@@ -14,9 +14,11 @@ if __name__ == "__main__":
         print("Prompt can't be empty")
         sys.exit(1)
 
+    auth = resolve_anthropic_auth()
     llm = ChatAnthropic(
         model="claude-haiku-4-5-20251001",
-        api_key=os.getenv("CLAUDE_API_KEY"),
+        api_key=auth.api_key,
+        auth_token=auth.auth_token,
         thinking_budget=-1,
     )
     agent = Agent(llm=llm, auto_minimize=True)
