@@ -8,7 +8,7 @@ from pathlib import Path
 
 from medusa.llms.views import ChatLLMUsage
 
-LOGS_DIR = Path(__file__).parent.parent.parent / "LOGS"
+LOGS_DIR = Path(__file__).parent.parent.parent / "LOGS/excel"
 
 # Official Anthropic pricing per million tokens ($/MTok) — source:
 # platform.claude.com/docs/en/about-claude/pricing

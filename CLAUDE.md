@@ -1,6 +1,6 @@
 # Agents
 
-This repository defines one primary coding/runtime agent: **Medusa**.
+This repository defines one primary agent: **Medusa**.
 
 Medusa is a Windows computer-use agent that can:
 - observe desktop state through screenshots,

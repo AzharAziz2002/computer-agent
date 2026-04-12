@@ -42,4 +42,6 @@ dependencies = [
     "httpx>=0.28.0",
     # Web tools (search + fetch)
     "readability-lxml>=0.8.1",
+    # Excel COM automation
+    "xlwings>=0.33.0",
 ]
