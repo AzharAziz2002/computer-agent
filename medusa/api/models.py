@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class StartTaskRequest(BaseModel):
     query: str
-    model: str = "claude-sonnet-4-6"
+    model: str | None = None
     session_id: str | None = None  # If set, append to existing session; else create new
 
 

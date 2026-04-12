@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +56,88 @@ def _coerce_host_path(raw_path: str) -> Path:
     return Path(raw_path)
 
 
+@lru_cache(maxsize=1)
+def _resolve_wsl_home_unc() -> Path | None:
+    """Get the default WSL distro's home as a Windows UNC path.
+
+    Returns e.g. ``\\\\wsl.localhost\\Ubuntu\\home\\huzaifa`` when WSL is
+    available, or ``None`` otherwise.  Result is cached for the process
+    lifetime.
+    """
+    wsl = shutil.which("wsl") or shutil.which("wsl.exe")
+    if not wsl:
+        return None
+    try:
+        # Distro name — first non-empty line from `wsl -l -q`.
+        distro_result = subprocess.run(
+            [wsl, "-l", "-q"],
+            capture_output=True, timeout=5,
+        )
+        raw = distro_result.stdout.decode("utf-16-le", errors="ignore")
+        distro = next(
+            (line for line in (l.strip("\r\n\x00 ") for l in raw.splitlines()) if line),
+            None,
+        )
+        if not distro:
+            return None
+
+        # WSL $HOME (e.g. /home/huzaifa).
+        home_result = subprocess.run(
+            [wsl, "bash", "-c", "printenv HOME"],
+            capture_output=True, text=True, timeout=5,
+        )
+        wsl_home = home_result.stdout.strip()
+        if not wsl_home or not wsl_home.startswith("/"):
+            return None
+
+        return Path(f"\\\\wsl.localhost\\{distro}{wsl_home}")
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+@lru_cache(maxsize=8)
+def _resolve_wsl_env(var_name: str) -> str | None:
+    """Read an environment variable from the default WSL distro."""
+    wsl = shutil.which("wsl") or shutil.which("wsl.exe")
+    if not wsl:
+        return None
+    try:
+        # Use printenv — avoids shell-escaping issues with $VAR from Windows.
+        result = subprocess.run(
+            [wsl, "bash", "-lic", f"printenv {var_name}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        value = result.stdout.strip()
+        return value or None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _wsl_path_to_windows(wsl_path: str) -> Path | None:
+    """Convert a WSL-internal path to a Windows-accessible path.
+
+    Paths starting with ``/mnt/<drive>/`` are mapped to ``<DRIVE>:\\``.
+    Other absolute paths are accessed via ``\\\\wsl.localhost\\<distro>\\``.
+    """
+    # /mnt/d/foo -> D:\foo  (drive letter at index 5, slash at index 6)
+    if wsl_path.startswith("/mnt/") and len(wsl_path) >= 7 and wsl_path[5].isalpha() and wsl_path[6] == "/":
+        drive_letter = wsl_path[5].upper()
+        rest = wsl_path[7:].replace("/", "\\")
+        return Path(f"{drive_letter}:\\{rest}")
+
+    # Absolute WSL filesystem path — needs UNC via distro name.
+    wsl_home_unc = _resolve_wsl_home_unc()
+    if wsl_home_unc and wsl_path.startswith("/"):
+        # Extract \\wsl.localhost\<distro> prefix from the home UNC.
+        # e.g. \\wsl.localhost\Ubuntu\home\huzaifa -> \\wsl.localhost\Ubuntu
+        parts = str(wsl_home_unc).split("\\")
+        # ['', '', 'wsl.localhost', 'Ubuntu', 'home', 'huzaifa']
+        if len(parts) >= 4:
+            unc_root = "\\".join(parts[:4])  # \\wsl.localhost\Ubuntu
+            return Path(unc_root + wsl_path.replace("/", "\\"))
+    return None
+
+
 def _resolve_home_candidates() -> list[Path]:
     candidates: list[Path] = []
 
@@ -82,6 +167,12 @@ def _resolve_home_candidates() -> list[Path]:
     # Windows drives mounted in WSL
     for drive in ("c", "d"):
         candidates.append(Path(f"/mnt/{drive}/Users/{username}"))
+
+    # WSL filesystem via UNC path (\\wsl.localhost\<distro>\home\<user>).
+    # Needed when Windows Python must read files written by WSL tools.
+    wsl_home_unc = _resolve_wsl_home_unc()
+    if wsl_home_unc:
+        candidates.append(wsl_home_unc)
 
     unique: list[Path] = []
     seen: set[str] = set()

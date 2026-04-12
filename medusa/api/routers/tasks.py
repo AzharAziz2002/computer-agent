@@ -4,9 +4,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 
-from medusa.auth import resolve_anthropic_auth
 from medusa.orchestrator.core import Agent
-from medusa.llms.anthropic import ChatAnthropic
+from medusa.llms.factory import build_runtime_llm
 from medusa.api.models import StartTaskRequest, StartTaskResponse, AgentStepModel, AgentActionModel, TaskUpdateFrame
 from medusa.api.state import store
 from medusa.sessions import session_store
@@ -17,7 +16,7 @@ load_dotenv()
 router = APIRouter()
 
 
-async def _run_agent(task_id: str, session_id: str, query: str, model: str) -> None:
+async def _run_agent(task_id: str, session_id: str, query: str, model: str | None) -> None:
     """Runs Agent.invoke() as an async task — notifies WebSocket clients via asyncio queues."""
     task = store.get(task_id)
     if not task:
@@ -60,14 +59,13 @@ async def _run_agent(task_id: str, session_id: str, query: str, model: str) -> N
         })
 
     try:
-        auth = resolve_anthropic_auth()
-        llm = ChatAnthropic(
-            model=model,
-            api_key=auth.api_key,
-            auth_token=auth.auth_token,
-            thinking_budget=-1,
+        runtime = build_runtime_llm(
+            model_override=model,
+            default_provider="anthropic",
+            default_model="claude-sonnet-4-6",
+            anthropic_thinking_budget=-1,
         )
-        agent = Agent(llm=llm, auto_minimize=False, mcp_manager=app_module.mcp_manager)
+        agent = Agent(llm=runtime.llm, auto_minimize=False, mcp_manager=app_module.mcp_manager)
         result = await agent.invoke(
             query,
             start_time=datetime.now(),

@@ -1,9 +1,8 @@
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
-from medusa.auth import resolve_anthropic_auth
 from medusa.orchestrator.core import Agent
-from medusa.llms.anthropic import ChatAnthropic
+from medusa.llms.factory import build_runtime_llm
 
 load_dotenv()
 
@@ -14,14 +13,13 @@ if __name__ == "__main__":
         print("Prompt can't be empty")
         sys.exit(1)
 
-    auth = resolve_anthropic_auth()
-    llm = ChatAnthropic(
-        model="claude-haiku-4-5-20251001",
-        api_key=auth.api_key,
-        auth_token=auth.auth_token,
-        thinking_budget=-1,
+    runtime = build_runtime_llm(
+        model_override=None,
+        default_provider="anthropic",
+        default_model="claude-haiku-4-5-20251001",
+        anthropic_thinking_budget=-1,
     )
-    agent = Agent(llm=llm, auto_minimize=True)
+    agent = Agent(llm=runtime.llm, auto_minimize=True)
     agent.print_response(prompt, start_time=start_time)
 
 # import asyncio

@@ -22,7 +22,10 @@ This document is for coding agents that need to understand project structure, mo
 - When working from WSL in this repository, do not assume `uv` or `python` is available in the Linux environment.
 - Use the Windows virtualenv interpreter directly: `./.venv/Scripts/python.exe`
 - Prefer commands such as `./.venv/Scripts/python.exe main.py` and `./.venv/Scripts/python.exe tests/test_tool_schemas.py`
-- Anthropic auth now supports repo-local token storage in `.credentials/anthropic.json` and automatic Claude Code credential reuse from `~/.claude/.credentials.json` when no explicit `auth_token` is supplied.
+- Anthropic auth supports repo-local token storage in `.credentials/anthropic.json` and automatic Claude Code credential reuse from `~/.claude/.credentials.json`.
+- OpenAI Codex auth supports repo-local OAuth storage in `.credentials/openai_codex.json` and automatic Codex CLI credential reuse from `~/.codex/auth.json`. Expired tokens are soft-refreshed from Codex CLI auth.json when available.
+- Runtime provider/model selection lives in `.credentials/llm_config.json`.
+- Use `python -m medusa.cli` (or `./.venv/Scripts/python.exe -m medusa.cli`) for interactive provider/model configuration.
 
 
 ## Runtime Architecture
@@ -50,10 +53,23 @@ This document is for coding agents that need to understand project structure, mo
 - `watchdog/observer.py`: UIA event thread (focus, structure, property change listeners).
 - `prompts/`: Prompt templates + generator for system and observation messages.
 
+### `medusa/auth`
+- `anthropic_auth.py`: Anthropic credential resolver (setup token, Claude Code CLI, API key, env vars).
+- `openai_codex_auth.py`: OpenAI Codex credential resolver (OAuth, Codex CLI, env vars). Includes soft-refresh and mtime-based expiry fallback.
+- `llm_config.py`: Active provider + model persistence (`llm_config.json`).
+- `catalog.py`: Provider catalog (frozen dataclasses) defining available providers, auth methods, and models.
+
+### `medusa/cli`
+- Interactive CLI for provider/model configuration. Invoke via `python -m medusa.cli`.
+- `app.py`: Argparse dispatch + interactive top-level menu.
+- `flows.py`: Setup, select, show, clear flows.
+- `display.py`: InquirerPy + rich formatting helpers.
+
 ### `medusa/llms`
 - Common contract:
   - `base.py`: `BaseChatLLM` protocol.
   - `views.py`: `ChatLLMResponse`, usage model, tool call model.
+- `factory.py`: `build_runtime_llm()` — reads config, resolves auth, instantiates LLM adapter.
 - Provider adapters:
   - `anthropic.py`, `google.py`, `openai.py`, `azure_openai.py`, `open_router.py`, `groq.py`, `cerebras.py`, `mistral.py`, `ollama.py`
   - Each adapter handles:
@@ -115,7 +131,11 @@ From WSL, use:
 ```bash
 ./.venv/Scripts/python.exe main.py
 ./.venv/Scripts/python.exe tests/test_tool_schemas.py
-./.venv/Scripts/python.exe manage_anthropic_auth.py set-token
+./.venv/Scripts/python.exe -m medusa.cli            # Interactive provider/model config
+./.venv/Scripts/python.exe -m medusa.cli setup       # Set up a provider
+./.venv/Scripts/python.exe -m medusa.cli select      # Switch active model
+./.venv/Scripts/python.exe -m medusa.cli show        # Show current config & auth status
+./.venv/Scripts/python.exe -m medusa.cli clear       # Clear stored credentials
 ```
 
 ## Where To Change Code

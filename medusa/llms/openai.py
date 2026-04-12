@@ -16,6 +16,7 @@ import json
 class ChatOpenAI(BaseChatLLM):
     model: str = "gpt-5.2"
     api_key: str = ""
+    provider_name: str = "openai"
     organization: str | None = None
     project: str | None = None
     base_url: str | None = None
@@ -27,6 +28,8 @@ class ChatOpenAI(BaseChatLLM):
     default_query: dict[str, object] | None = None
     http_client: Client | None = None
     strict_response_validation: bool = False
+    reasoning_effort: str = "medium"
+    account_id: str | None = None
 
     # === Responses API specific ===
     _last_response_id: str | None = field(default=None, repr=False)
@@ -39,6 +42,9 @@ class ChatOpenAI(BaseChatLLM):
     @property
     def client(self) -> OpenAI:
         if self._client is None:
+            headers = dict(self.default_headers) if self.default_headers else {}
+            if self.account_id:
+                headers["ChatGPT-Account-Id"] = self.account_id
             self._client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
@@ -47,7 +53,7 @@ class ChatOpenAI(BaseChatLLM):
                 timeout=self.timeout,
                 organization=self.organization,
                 project=self.project,
-                default_headers=self.default_headers,
+                default_headers=headers or None,
                 default_query=self.default_query,
                 http_client=self.http_client,
             )
@@ -55,7 +61,7 @@ class ChatOpenAI(BaseChatLLM):
 
     @property
     def provider(self) -> str:
-        return "openai"
+        return self.provider_name
 
     @property
     def model_name(self) -> str:
@@ -154,13 +160,13 @@ class ChatOpenAI(BaseChatLLM):
         tools: list[dict]|None = None,
         structured_output: type[BaseModel] | None = None,
         use_conversation_chain: bool = True,
-        reasoning_effort: Literal["low", "medium", "high", "none"] | None = "none",
+        reasoning_effort: Literal["low", "medium", "high", "none"] | None = None,
     ) -> ChatLLMResponse:
         """Invoke OpenAI Responses API with optional native tool calling."""
+        effective_effort = reasoning_effort if reasoning_effort is not None else self.reasoning_effort
         request_params: dict = {
             "model": self.model,
-            "reasoning": {"effort": reasoning_effort},
-            "text": {"verbosity": "low"},
+            "reasoning": {"effort": effective_effort},
         }
 
         if use_conversation_chain and self._last_response_id:
@@ -181,9 +187,6 @@ class ChatOpenAI(BaseChatLLM):
                     "strict": True
                 }
             }
-
-        if reasoning_effort:
-            request_params["reasoning"] = {"effort": reasoning_effort}
 
         response = self.client.responses.create(**request_params)
         self._last_response_id = response.id
