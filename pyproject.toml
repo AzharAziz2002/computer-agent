@@ -44,4 +44,6 @@ dependencies = [
     "readability-lxml>=0.8.1",
     # Excel COM automation
     "xlwings>=0.33.0",
+    # CLI provider/model configuration
+    "InquirerPy>=0.3.4",
 ]
