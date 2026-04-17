@@ -6,7 +6,13 @@ from medusa.auth import load_llm_config, resolve_anthropic_auth, resolve_openai_
 from medusa.llms.anthropic import ChatAnthropic
 from medusa.llms.openai import ChatOpenAI
 
-OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api/v1"
+# Codex CLI OAuth tokens work against the ChatGPT backend Responses API.
+# The correct base URL is chatgpt.com/backend-api (NO /v1 suffix) — the SDK
+# appends /responses making the full path chatgpt.com/backend-api/responses.
+# Using /v1 → HTML (that path doesn't exist).
+# Using api.openai.com → 401 missing api.responses.write scope (Codex JWT
+# doesn't carry that scope; chatgpt.com endpoint doesn't require it).
+OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 
 # Anthropic thinking-budget mapping (token count per reasoning level).
 ANTHROPIC_THINKING_BUDGETS: dict[str, int] = {

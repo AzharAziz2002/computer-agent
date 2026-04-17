@@ -191,6 +191,8 @@ def excel(action: str, **kwargs) -> str:
                     return _dump(xl.range_delete_columns(kwargs['sheet_name'], kwargs['address']))
                 case 'used':
                     return _dump(xl.range_used(kwargs['sheet_name']))
+                case 'summary':
+                    return _dump(xl.range_summary(kwargs['sheet_name'], kwargs['address']))
                 case 'set_hyperlink':
                     return _dump(xl.range_set_hyperlink(
                         kwargs['sheet_name'], kwargs['address'], kwargs['url'],

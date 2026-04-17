@@ -33,7 +33,7 @@ class ExcelAction(SharedBaseModel):
         # range (list/create/read shared with above)
         'read', 'write', 'read_formulas', 'clear', 'format', 'merge', 'unmerge',
         'autofit', 'sort', 'find', 'replace', 'insert_rows', 'delete_rows',
-        'insert_columns', 'delete_columns', 'used', 'set_hyperlink', 'set_validation',
+        'insert_columns', 'delete_columns', 'used', 'summary', 'set_hyperlink', 'set_validation',
         # table
         'get_data', 'add_row', 'add_column', 'resize', 'toggle_totals',
         'set_column_total', 'filter', 'clear_filters', 'set_style',
@@ -56,7 +56,7 @@ class ExcelAction(SharedBaseModel):
             "Sub-operation within the action category.\n"
             "file: list_workbooks | connect | test | open | create | save | close | quit\n"
             "sheet: list | create | rename | delete | copy | move | visibility | tab_color\n"
-            "range: read | write | read_formulas | clear | format | merge | unmerge | autofit | sort | find | replace | insert_rows | delete_rows | insert_columns | delete_columns | used | set_hyperlink | set_validation\n"
+            "range: read | write | read_formulas | clear | format | merge | unmerge | autofit | sort | find | replace | insert_rows | delete_rows | insert_columns | delete_columns | used | summary | set_hyperlink | set_validation\n"
             "table: list | create | read | get_data | add_row | add_column | rename | delete | resize | toggle_totals | set_column_total | sort | filter | clear_filters | set_style\n"
             "chart: list | create | create_from_table | set_title | set_type | set_source | move | delete | set_legend | set_axis_title\n"
             "pivot: list | create_from_range | create_from_table | add_field | remove_field | list_fields | refresh | set_layout | set_subtotals | set_grand_totals | sort_field | filter_field | delete | set_field_number_format\n"
@@ -112,7 +112,7 @@ class ExcelAction(SharedBaseModel):
         None, description="[range, chart, cond_format, screenshot] Sheet name."
     )
     address: Optional[str] = Field(
-        None, description="[range] Cell/range address e.g. 'A1', 'A1:D10', 'B:B'."
+        None, description="[range] Cell/range address e.g. 'A1', 'A1:D10', 'B:B'. For 'summary': the numeric range to summarize (returns count/sum/min/max/avg/median without reading all values)."
     )
     values: Optional[list] = Field(
         None, description="[range: write] 2D list — strings starting with '=' are formulas. [table: add_row] 1D list of row values."

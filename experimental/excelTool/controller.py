@@ -329,14 +329,51 @@ class ExcelController:
             rows.pop()
         return rows if rows else [[None]]
 
+    @staticmethod
+    def _normalize_values(values, rng) -> list[list]:
+        """
+        Normalize xlwings range values into a consistent 2D list (rows × columns).
+
+        Why this is needed:
+          xlwings returns different shapes depending on the range dimensions:
+            - Single cell  → scalar (e.g. 42)
+            - Single row   → flat list [v1, v2, v3]
+            - Single column → flat list [v1, v2, v3]  (SAME as single row!)
+            - 2D range     → list of lists [[v1, v2], [v3, v4]]
+
+          The ambiguity between single-row and single-column (both return flat lists)
+          means we must check the actual range shape via rng.rows.count / rng.columns.count
+          to determine the correct orientation.
+
+        Returns:
+          Always a list of lists: [[row1_col1, row1_col2], [row2_col1, row2_col2], ...]
+        """
+        if values is None:
+            return [[None]]
+        if not isinstance(values, list):
+            return [[values]]
+        if values and not isinstance(values[0], list):
+            # Flat list — could be single row OR single column.
+            # Check the actual range dimensions to decide orientation.
+            if rng.columns.count == 1 and rng.rows.count > 1:
+                # Single column: transpose flat list into column of rows
+                return [[v] for v in values]
+            else:
+                # Single row (or 1×1 edge case): keep as single row
+                return [values]
+        return values
+
     def range_read(self, sheet_name: str, address: str) -> dict:
         """
         Read values from a range.
 
-        Safety measures:
+        Safety pipeline:
           1. clip_to_used — full-column addresses like 'J:J' (1,048,576 rows) are
              intersected with UsedRange so only the data region is read.
-          2. _trim_trailing_empty — strips bottom rows that are all None/empty,
+          2. _normalize_values — converts xlwings' inconsistent return shapes into
+             a proper 2D list, using actual range dimensions to distinguish single-row
+             from single-column (both return flat lists from xlwings).
+          3. _trim_trailing_empty — strips bottom rows that are all None/empty,
              which handles stale UsedRange extents from cleared-but-not-deleted cells.
 
         Together these prevent token overflow: 'J:J' on a 300-row dataset returns
@@ -344,15 +381,7 @@ class ExcelController:
         """
         rng = self._resolve_range(sheet_name, address, clip_to_used=True)
         values = rng.value
-        # Normalize to 2D list
-        if values is None:
-            rows = [[None]]
-        elif not isinstance(values, list):
-            rows = [[values]]
-        elif values and not isinstance(values[0], list):
-            rows = [values]
-        else:
-            rows = values
+        rows = self._normalize_values(values, rng)
         rows = self._trim_trailing_empty(rows)
         return {
             "sheet": sheet_name,
@@ -391,9 +420,12 @@ class ExcelController:
         """
         Read formulas from a range.
 
-        Same safety as range_read: clips to UsedRange first, then trims trailing
-        empty rows. For formulas, an "empty" cell returns an empty string "" from
-        the COM .Formula property (not None like .value), so the trim checks both.
+        Same safety pipeline as range_read:
+          1. clip_to_used — prevents reading 1M rows for full-column addresses
+          2. COM .Formula returns a tuple-of-tuples (not a list), so we convert via
+             _com_array_to_list. Single cells return a plain string.
+          3. _trim_trailing_empty — strips trailing empties (formula empty cells
+             return "" not None from COM .Formula property)
         """
         rng = self._resolve_range(sheet_name, address, clip_to_used=True)
         formulas = rng.api.Formula
@@ -554,6 +586,36 @@ class ExcelController:
             "column_count": used.columns.count,
             "last_cell": used.last_cell.address,
         }
+
+    def range_summary(self, sheet_name: str, address: str) -> dict:
+        """
+        Get statistical summary of a numeric range without returning all values.
+
+        Why this exists:
+          When the agent needs min/max/avg/count of a column (e.g. Annual Salary),
+          reading all 1000 values into the context window just to compute stats is
+          wasteful and risks token overflow. This uses Excel's built-in worksheet
+          functions (COUNTA, MIN, MAX, AVERAGE, SUM, MEDIAN) which run inside Excel
+          and return only the 6 summary numbers.
+
+        Uses Application.WorksheetFunction — the same engine Excel uses for cell
+        formulas, so results are identical to what =MIN(J2:J1001) would produce.
+        """
+        rng = self._resolve_range(sheet_name, address, clip_to_used=True)
+        ws_func = self._app.api.WorksheetFunction
+        try:
+            return {
+                "address": rng.address,
+                "count": int(ws_func.CountA(rng.api)),
+                "numeric_count": int(ws_func.Count(rng.api)),
+                "sum": ws_func.Sum(rng.api),
+                "min": ws_func.Min(rng.api),
+                "max": ws_func.Max(rng.api),
+                "average": round(ws_func.Average(rng.api), 2),
+                "median": ws_func.Median(rng.api),
+            }
+        except Exception as e:
+            return {"address": rng.address, "error": f"Summary failed (range may not be numeric): {e}"}
 
     def range_set_hyperlink(
         self, sheet_name: str, address: str, url: str, display_text: str | None = None

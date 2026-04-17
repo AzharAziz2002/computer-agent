@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -14,6 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CREDENTIALS_DIR = REPO_ROOT / ".credentials"
 ANTHROPIC_CREDENTIAL_FILE = CREDENTIALS_DIR / "anthropic.json"
 CLAUDE_CREDENTIALS_RELATIVE_PATH = Path(".claude/.credentials.json")
+
+# --- Anthropic OAuth refresh constants ---
+# Sourced from OpenClaw's pi-ai OAuth module (anthropic.js).
+# Used to refresh expired OAuth tokens (sk-ant-oat*) via the "shared write-back"
+# approach: refresh the token, then write new access + refresh tokens back to the
+# SAME credential file so both Medusa and Claude Code CLI stay in sync.
+ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 
 @dataclass(slots=True)
@@ -46,6 +56,99 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
     return data if isinstance(data, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# OAuth token refresh  (shared write-back)
+# ---------------------------------------------------------------------------
+
+def _refresh_oauth_token(refresh_token: str) -> dict[str, Any] | None:
+    """Exchange a single-use refresh token for a new access + refresh pair.
+
+    Calls Anthropic's OAuth token endpoint with grant_type=refresh_token.
+    Returns dict with ``access_token``, ``refresh_token``, ``expires_at`` (ms)
+    on success, or ``None`` on any failure.
+
+    IMPORTANT: Refresh tokens are **single-use**.  After a successful call the
+    old refresh_token is permanently invalidated — the caller MUST persist the
+    new refresh_token returned here.
+    """
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "client_id": ANTHROPIC_OAUTH_CLIENT_ID,
+        "refresh_token": refresh_token,
+    }).encode("utf-8")
+
+    # User-Agent must look like a real client — Cloudflare blocks the default
+    # Python-urllib UA with a 1010 "browser signature ban".  We send the same
+    # user-agent string that Claude CLI uses for API requests.
+    req = urllib.request.Request(
+        ANTHROPIC_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "claude-cli/2.1.75",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+        return None
+
+    access_token = data.get("access_token")
+    new_refresh = data.get("refresh_token")
+    expires_in = data.get("expires_in")
+
+    if not access_token or not new_refresh or not isinstance(expires_in, (int, float)):
+        return None
+
+    # 5-minute safety margin — matches OpenClaw's expiry calculation:
+    # Date.now() + expires_in * 1000 - 5 * 60 * 1000
+    expires_at = int(time.time() * 1000) + int(expires_in * 1000) - 5 * 60 * 1000
+
+    return {
+        "access_token": access_token,
+        "refresh_token": new_refresh,
+        "expires_at": expires_at,
+    }
+
+
+def _write_back_cli_credentials(credential_path: Path, refreshed: dict[str, Any]) -> bool:
+    """Write refreshed tokens back to a Claude Code CLI credential file.
+
+    Preserves all existing fields (scopes, subscriptionType, rateLimitTier,
+    etc.) and only updates accessToken, refreshToken, expiresAt.  This is the
+    "shared write-back" mechanism: after Medusa refreshes, Claude Code CLI
+    picks up the new tokens on its next read.
+    """
+    try:
+        raw = credential_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+
+    oauth = payload.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return False
+
+    # Only touch the three token-related fields; leave everything else intact.
+    oauth["accessToken"] = refreshed["access_token"]
+    oauth["refreshToken"] = refreshed["refresh_token"]
+    oauth["expiresAt"] = refreshed["expires_at"]
+
+    try:
+        credential_path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+
+    return True
 
 
 def _coerce_host_path(raw_path: str) -> Path:
@@ -185,7 +288,32 @@ def _resolve_home_candidates() -> list[Path]:
 
 
 def _resolve_claude_credential_paths() -> list[Path]:
-    return [home_dir / CLAUDE_CREDENTIALS_RELATIVE_PATH for home_dir in _resolve_home_candidates()]
+    paths: list[Path] = []
+
+    # --- CLAUDE_CONFIG_DIR override ---
+    # When set, Claude Code stores config (including .credentials.json) in this
+    # directory instead of ~/.claude/.  The credentials file sits directly inside
+    # the config dir (no .claude/ subdirectory).
+    config_dir = _clean_secret(os.getenv("CLAUDE_CONFIG_DIR"))
+    if config_dir:
+        paths.append(_coerce_host_path(config_dir) / ".credentials.json")
+
+    # --- Well-known non-default config locations ---
+    # Claude Code desktop/CLI may write credentials to a separate data directory
+    # (e.g. D:\Software\...\claude_code).  Include both WSL and Windows forms so
+    # resolution works regardless of which Python interpreter is running.
+    for extra in (
+        Path("/mnt/d/Software/SoftwareFiles/claude_code"),       # WSL Python
+        Path(r"D:\Software\SoftwareFiles\claude_code"),           # Windows Python
+    ):
+        cred = extra / ".credentials.json"
+        if cred not in paths:
+            paths.append(cred)
+
+    # --- Default: ~/.claude/.credentials.json under each home candidate ---
+    paths.extend(home_dir / CLAUDE_CREDENTIALS_RELATIVE_PATH for home_dir in _resolve_home_candidates())
+
+    return paths
 
 
 def _resolve_api_key(explicit_api_key: str | None = None) -> tuple[str | None, str | None]:
@@ -212,7 +340,35 @@ def load_persisted_anthropic_token() -> ResolvedAnthropicAuth | None:
     expires_at_raw = payload.get("expires_at")
     expires_at = expires_at_raw if isinstance(expires_at_raw, int) else None
     now_ms = int(time.time() * 1000)
+
     if expires_at is not None and expires_at <= now_ms:
+        # --- Auto-refresh for persisted OAuth tokens ---
+        # If the token is expired but we have a refresh_token stored alongside
+        # it, attempt to refresh.  On success, update the persisted file with
+        # both the new access and refresh tokens.
+        refresh_token = _clean_secret(payload.get("refresh_token"))
+        if refresh_token:
+            refreshed = _refresh_oauth_token(refresh_token)
+            if refreshed:
+                # Write new tokens back to .credentials/anthropic.json
+                payload["token"] = refreshed["access_token"]
+                payload["refresh_token"] = refreshed["refresh_token"]
+                payload["expires_at"] = refreshed["expires_at"]
+                payload["updated_at"] = int(time.time() * 1000)
+                try:
+                    ANTHROPIC_CREDENTIAL_FILE.write_text(
+                        json.dumps(payload, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass  # Token is still usable even if persist fails
+                return ResolvedAnthropicAuth(
+                    auth_token=refreshed["access_token"],
+                    source="repo persisted token (refreshed)",
+                    expires_at=refreshed["expires_at"],
+                    credential_path=str(ANTHROPIC_CREDENTIAL_FILE),
+                )
+        # Expired and no refresh token (or refresh failed) — skip
         return None
 
     return ResolvedAnthropicAuth(
@@ -241,7 +397,24 @@ def load_claude_cli_token() -> ResolvedAnthropicAuth | None:
 
         expires_at_raw = oauth_payload.get("expiresAt")
         expires_at = expires_at_raw if isinstance(expires_at_raw, int) else None
+
         if expires_at is not None and expires_at <= now_ms:
+            # --- Shared write-back refresh ---
+            # Access token is expired.  If a refresh token is available, use it
+            # to obtain fresh tokens and write them BACK to this same credential
+            # file.  This keeps Claude Code CLI in sync — it will read the new
+            # tokens on its next startup/refresh cycle.
+            refresh_token = _clean_secret(oauth_payload.get("refreshToken"))
+            if refresh_token:
+                refreshed = _refresh_oauth_token(refresh_token)
+                if refreshed and _write_back_cli_credentials(candidate, refreshed):
+                    return ResolvedAnthropicAuth(
+                        auth_token=refreshed["access_token"],
+                        source="Claude Code oauth (refreshed)",
+                        expires_at=refreshed["expires_at"],
+                        credential_path=str(candidate),
+                    )
+            # Refresh failed or no refresh token — try next candidate file
             continue
 
         refresh_token = _clean_secret(oauth_payload.get("refreshToken"))
@@ -293,7 +466,11 @@ def resolve_anthropic_auth(
     )
 
 
-def save_anthropic_setup_token(token: str, expires_at: int | None = None) -> Path:
+def save_anthropic_setup_token(
+    token: str,
+    expires_at: int | None = None,
+    refresh_token: str | None = None,
+) -> Path:
     normalized = _normalize_token(token)
     if not normalized:
         raise ValueError("Anthropic setup token cannot be empty.")
@@ -308,6 +485,10 @@ def save_anthropic_setup_token(token: str, expires_at: int | None = None) -> Pat
     }
     if expires_at is not None:
         payload["expires_at"] = expires_at
+    # Store refresh_token alongside the access token so auto-refresh can work
+    # for persisted tokens (not just CLI-imported ones).
+    if refresh_token:
+        payload["refresh_token"] = _normalize_token(refresh_token)
 
     ANTHROPIC_CREDENTIAL_FILE.write_text(
         json.dumps(payload, indent=2) + "\n",

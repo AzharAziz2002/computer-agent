@@ -167,6 +167,11 @@ class ChatOpenAI(BaseChatLLM):
         request_params: dict = {
             "model": self.model,
             "reasoning": {"effort": effective_effort},
+            # Disable response storage — Responses API defaults to store=True which
+            # requires api.responses.write scope. OAuth tokens (Codex CLI) don't
+            # have that scope, so we must opt out explicitly (matches OpenClaw's
+            # storeMode: "disable" in resolveOpenAIResponsesPayloadPolicy).
+            "store": False,
         }
 
         if use_conversation_chain and self._last_response_id:

@@ -39,22 +39,37 @@ class ChatAnthropic(BaseChatLLM):
                 "default_query": self.default_query,
                 "http_client": self.http_client,
             }
-            if self.api_key:
-                client_kwargs["api_key"] = self.api_key
             if self.auth_token:
-                client_kwargs["auth_token"] = self.auth_token
-                # Claude Code OAuth tokens (sk-ant-oat*) require opt-in beta headers.
-                # Without oauth-2025-04-20 the API returns 401 "OAuth authentication is
-                # currently not supported." (verified against OpenClaw transport layer).
+                # OAuth tokens (sk-ant-oat*) use Authorization: Bearer via the
+                # SDK's `auth_token` param, with `api_key=None` to suppress the
+                # default X-Api-Key header.  The `oauth-2025-04-20` beta flag
+                # tells the API to accept Bearer auth for OAuth tokens.
+                #
+                # This matches OpenClaw's pi-ai transport (anthropic.js):
+                #   new Anthropic({ apiKey: null, authToken: oauthToken, ... })
                 if "sk-ant-oat" in self.auth_token:
+                    client_kwargs["api_key"] = None
+                    client_kwargs["auth_token"] = self.auth_token
+                    # Minimal beta set matching OpenClaw / pi-ai exactly.
+                    # Do NOT add interleaved-thinking or fine-grained-tool-streaming
+                    # here — those betas require account-level entitlements and cause
+                    # 429 model-access errors on Sonnet/Opus for most OAuth accounts.
                     oauth_headers: dict[str, str] = {
-                        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                        # Matches OpenClaw anthropic-transport-stream.ts exactly:
+                        # fine-grained-tool-streaming is always included for OAuth.
+                        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+                        "anthropic-dangerous-direct-browser-access": "true",
                         "user-agent": "claude-cli/2.1.75",
                         "x-app": "cli",
                     }
                     if self.default_headers:
                         oauth_headers.update(self.default_headers)
                     client_kwargs["default_headers"] = oauth_headers
+                else:
+                    # Non-OAuth auth_token (e.g. setup-token) — use Bearer auth.
+                    client_kwargs["auth_token"] = self.auth_token
+            elif self.api_key:
+                client_kwargs["api_key"] = self.api_key
             self._client = Anthropic(**client_kwargs)
         return self._client
 
@@ -187,16 +202,32 @@ class ChatAnthropic(BaseChatLLM):
                     block["cache_control"] = {"type": "ephemeral"}
                     break
 
+    @property
+    def _is_oauth_token(self) -> bool:
+        return bool(self.auth_token and "sk-ant-oat" in self.auth_token)
+
+    def _build_system(self, system_instruction: str) -> list:
+        """Build system blocks. OAuth tokens require the Claude Code identity
+        block prepended first — OpenClaw always sends this and Anthropic
+        validates it to grant full subscription model access."""
+        main_block = TextBlockParam(type="text", text=system_instruction, cache_control=CacheControlEphemeralParam(type="ephemeral", ttl="5m"))
+        if self._is_oauth_token:
+            identity = TextBlockParam(type="text", text="You are Claude Code, Anthropic's official CLI for Claude.")
+            return [identity, main_block]
+        return [main_block]
+
     def invoke(self, messages: list[BaseMessage], tools: list[dict]|None=None, structured_output:BaseModel|None = None):
         """Invoke Anthropic API with optional native tool calling."""
         system_instruction, messages = self.serialize_messages(messages)
         self._apply_cache_control(messages, cache_query=USER_QUERY_CACHE)
         thinking_enabled = self.thinking_budget > -1
+        # max_tokens must be strictly greater than budget_tokens (Anthropic requirement).
+        effective_max_tokens = max(self.max_tokens, self.thinking_budget + 1024) if thinking_enabled else self.max_tokens
         params = dict(
-            max_tokens=self.max_tokens,
+            max_tokens=effective_max_tokens,
             model=self.model,
             thinking=ThinkingConfigEnabledParam(type="enabled",budget_tokens=self.thinking_budget) if thinking_enabled else ThinkingConfigDisabledParam(type="disabled"),
-            system=[TextBlockParam(type="text",text=system_instruction,cache_control=CacheControlEphemeralParam(type="ephemeral",ttl='5m'))],
+            system=self._build_system(system_instruction),
             messages=messages,
         )
         if not thinking_enabled:
@@ -247,11 +278,12 @@ class ChatAnthropic(BaseChatLLM):
         system_instruction, messages = self.serialize_messages(messages)
         self._apply_cache_control(messages, cache_query=USER_QUERY_CACHE)
         thinking_enabled = self.thinking_budget > -1
+        effective_max_tokens = max(self.max_tokens, self.thinking_budget + 1024) if thinking_enabled else self.max_tokens
         params = dict(
-            max_tokens=self.max_tokens,
+            max_tokens=effective_max_tokens,
             model=self.model,
             thinking=ThinkingConfigEnabledParam(type="enabled", budget_tokens=self.thinking_budget) if thinking_enabled else ThinkingConfigDisabledParam(type="disabled"),
-            system=[TextBlockParam(type="text", text=system_instruction, cache_control=CacheControlEphemeralParam(type="ephemeral", ttl='5m'))],
+            system=self._build_system(system_instruction),
             messages=messages,
         )
         if not thinking_enabled:
