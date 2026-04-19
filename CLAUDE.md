@@ -80,12 +80,14 @@ This document is for coding agents that need to understand project structure, mo
 - Common contract:
   - `base.py`: `BaseChatLLM` protocol.
   - `views.py`: `ChatLLMResponse`, usage model, tool call model.
+  - `factory.py`: `build_runtime_llm()` — resolves provider from `.credentials/llm_config.json`, loads auth, instantiates the correct LLM class.
 - Provider adapters:
-  - `anthropic.py`, `google.py`, `openai.py`, `azure_openai.py`, `open_router.py`, `groq.py`, `cerebras.py`, `mistral.py`, `ollama.py`
-  - Each adapter handles:
-    - message serialization,
-    - provider-specific tool schema formatting,
-    - response parsing into common `ChatLLMResponse`.
+  - `anthropic.py` — Anthropic Messages API. Supports API key and OAuth (`sk-ant-oat*`) tokens. OAuth path prepends a mandatory identity system block and sends `claude-code-20250219,oauth-2025-04-20` beta headers. Includes prompt caching (system + tools + last user message) and optional extended thinking.
+  - `openai.py` — Two classes:
+    - `ChatOpenAI`: standard OpenAI Responses API via SDK. Used for `openai` provider.
+    - `ChatOpenAICodex`: raw `httpx` SSE transport to `chatgpt.com/backend-api/codex/responses`. Used for `openai-codex` provider. Requires JWT Bearer token + `chatgpt-account-id` (extracted from JWT) + `originator: pi` header. System prompt goes in top-level `instructions` field, not inside `input`.
+  - Both `ChatOpenAI` and `ChatOpenAICodex` generate a stable per-session UUID as `prompt_cache_key` for OpenAI-side prefix caching.
+  - `google.py`, `azure_openai.py`, `open_router.py`, `groq.py`, `cerebras.py`, `mistral.py`, `ollama.py` — additional provider adapters.
 
 ### `medusa/messages`
 - Unified internal message types used across providers:
@@ -152,7 +154,16 @@ These modules exist in the codebase but are **not active** in the current agent 
 ## Configuration and Environment
 
 - `.env` is expected for API credentials (for example `CLAUDE_API_KEY`). Also holds OAuth client IDs/secrets for MCP connectors (e.g. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+- `.credentials/llm_config.json` — active provider + model selection (`provider`, `model`, `reasoning_level`). Managed by `python -m medusa.cli`.
+- `.credentials/anthropic.json` — Anthropic credentials. Supports API key (`ANTHROPIC_API_KEY` env) or OAuth token (`sk-ant-oat*`) obtained via `python -m medusa.cli setup`. OAuth tokens auto-refresh against `platform.claude.com/v1/oauth/token` on expiry; refreshed token is written back to this file.
+- `.credentials/openai_codex.json` — OpenAI Codex OAuth credentials (JWT Bearer token). Sourced from Codex CLI (`~/.codex/auth.json`) or via `python -m medusa.cli setup`. On expiry, the auth module does a soft-refresh by re-reading the Codex CLI file (which the CLI may have refreshed in the background).
 - `.credentials/connectors.enc` — encrypted connector credentials (Fernet). Master key stored in OS keyring. **Never committed** (in `.gitignore`).
+
+**Auth modules** (`medusa/auth/`):
+- `anthropic_auth.py` — resolves Anthropic credentials from env, `.credentials/anthropic.json`, or Claude Code CLI token file. Handles OAuth refresh via `platform.claude.com/v1/oauth/token`.
+- `openai_codex_auth.py` — resolves Codex JWT from env, `.credentials/openai_codex.json`, or `~/.codex/auth.json`. Validates JWT expiry; falls back to mtime + 1h if JWT has no `exp` claim.
+- `llm_config.py` — loads/saves `.credentials/llm_config.json`.
+- `catalog.py` — frozen dataclasses describing each provider's supported auth methods and model list.
 - Core dependencies in `pyproject.toml` include:
   - desktop automation (`pyautogui`, `pywin32`, `uiautomation`, `comtypes`),
   - LLM SDKs (Anthropic, Google, OpenAI, Groq, Ollama, Mistral, Cerebras),
@@ -188,6 +199,9 @@ tree /f /a
   - new adapter in `medusa/llms/`
   - ensure `invoke()` returns `ChatLLMResponse`
   - implement message serializer + tool schema formatter
+  - register in `medusa/llms/factory.py` (`build_runtime_llm`)
+  - add provider entry to `medusa/auth/catalog.py`
+  - for OAuth providers: add auth resolution in `medusa/auth/` and wire into `factory.py`
 
 - **Change prompt behavior:**
   - templates in `medusa/orchestrator/prompts/*.md`

@@ -1,4 +1,6 @@
-from medusa.orchestrator.tools.service import desktop, shell, done, app, browser, web_search, web_fetch, excel
+from medusa.orchestrator.tools.service import (
+    desktop, shell, done, app, browser, web_search, web_fetch, excel
+)
 from medusa.orchestrator.registry.views import ToolResult
 from medusa.orchestrator.browser.controller import BrowserController
 from medusa.orchestrator.browser.config import BrowserConfig
@@ -22,8 +24,7 @@ import asyncio
 class Agent:
     def __init__(self, instructions: list[str]=[], llm: BaseChatLLM=None, max_consecutive_failures: int=3, auto_minimize: bool=False, enable_telemetry: bool=False, enable_watchdog: bool=False, mcp_manager=None):
         self.registry = Registry([
-        shell,
-        excel,
+        shell,        
         ])
         self.browser_controller = BrowserController(BrowserConfig())
         self.instructions = instructions
@@ -138,6 +139,7 @@ class Agent:
                             context.append(ToolCallMessage(
                                 content=(llm_response.content or "") if i == 0 else "",
                                 tool_call_id=tool_call_id,
+                                tool_item_id=tool_call.item_id,
                                 tool_name=tool_name,
                                 tool_input=tool_args
                             ))

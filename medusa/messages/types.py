@@ -58,6 +58,7 @@ class ToolCallMessage(BaseMessage):
     role: Literal["ai"] = "ai"
     content: str = ""
     tool_call_id: str|None = None
+    tool_item_id: str|None = None  # Provider item ID (e.g. Codex 'fc_...' ID)
     tool_name: str = ""
     tool_input: dict = {}
 

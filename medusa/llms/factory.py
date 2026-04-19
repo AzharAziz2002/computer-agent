@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from medusa.auth import load_llm_config, resolve_anthropic_auth, resolve_openai_codex_auth
 from medusa.llms.anthropic import ChatAnthropic
-from medusa.llms.openai import ChatOpenAI
+from medusa.llms.openai import ChatOpenAI, ChatOpenAICodex
 
 # Codex CLI OAuth tokens work against the ChatGPT backend Responses API.
 # The correct base URL is chatgpt.com/backend-api (NO /v1 suffix) — the SDK
@@ -52,15 +52,13 @@ def build_runtime_llm(
                 "OpenAI Codex is selected but no valid ChatGPT OAuth credentials were found. "
                 "Run `python -m medusa.cli setup` to configure credentials."
             )
-        # Map reasoning level to OpenAI effort string.
-        reasoning_effort = configured_reasoning if configured_reasoning in ("low", "medium", "high") else "medium"
-        llm = ChatOpenAI(
+        # Map reasoning level to Codex effort string.
+        reasoning_effort = configured_reasoning if configured_reasoning in ("low", "medium", "high") else "high"
+        llm = ChatOpenAICodex(
             model=effective_model,
             api_key=auth.access_token,
             base_url=OPENAI_CODEX_BASE_URL,
-            provider_name="openai-codex",
             reasoning_effort=reasoning_effort,
-            account_id=auth.account_id,
         )
         return ResolvedLLMRuntime(
             llm=llm,

@@ -9,6 +9,7 @@ class ChatLLMUsage(BaseModel):
 class ToolCall(BaseModel):
     """Represents a single tool call from the LLM response."""
     id: str|None = None
+    item_id: str|None = None  # Provider item ID (e.g. Codex 'fc_...' ID)
     name: str
     arguments: dict
     raw: str|None = None  # Provider's raw response object repr
