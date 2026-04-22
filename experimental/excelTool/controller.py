@@ -615,7 +615,7 @@ class ExcelController:
                 "median": ws_func.Median(rng.api),
             }
         except Exception as e:
-            return {"address": rng.address, "error": f"Summary failed (range may not be numeric): {e}"}
+            raise ExcelError(f"Summary failed (range may not be numeric): {e}") from e
 
     def range_set_hyperlink(
         self, sheet_name: str, address: str, url: str, display_text: str | None = None

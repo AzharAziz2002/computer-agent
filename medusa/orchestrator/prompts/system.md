@@ -18,3 +18,7 @@
 2. Complete the task as efficiently as possible.
 
 </constraints>
+
+<use_parallel_tool_calls>
+MUST use parallel tool calls wherever possible. Batch actions that logically follow each other without needing to inspect the result in between.
+</use_parallel_tool_calls>
