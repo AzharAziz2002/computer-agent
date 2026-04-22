@@ -4,56 +4,85 @@ Medusa is an AI agent that controls your Windows computer the way a human would 
 
 > Project is in early development. More features coming soon.
 
-## Anthropic Auth
-
-Medusa can now run Anthropic without `CLAUDE_API_KEY` if either of these exists:
-
-- a repo-local token file at `.credentials/anthropic.json`
-- a Claude Code login at `~/.claude/.credentials.json` or common WSL Windows-home equivalents
-
-To save a setup token locally from WSL:
+## Quick Start
 
 ```bash
-./.venv/Scripts/python.exe manage_anthropic_auth.py set-token
+uv sync
 ```
 
-To inspect which auth source Medusa will use:
+**Run the CLI agent:**
+```bash
+uv run python main.py
+```
+
+**Start the API server** (for frontend — does not start automatically):
+```bash
+uv run python server.py
+```
+
+The server runs at `http://127.0.0.1:8000`.
+
+---
+
+## Auth Setup
+
+Before running, configure a provider and credentials:
 
 ```bash
-./.venv/Scripts/python.exe manage_anthropic_auth.py show
+uv run python -m medusa.cli
 ```
 
-## OpenAI Codex Auth
+This opens an interactive menu. Use the sub-commands below to go directly to a specific flow:
 
-Medusa can also run with ChatGPT OAuth-backed Codex access.
+| Command | What it does |
+|---|---|
+| `uv run python -m medusa.cli setup` | Set up a provider (API key or OAuth token) |
+| `uv run python -m medusa.cli select` | Switch the active provider/model |
+| `uv run python -m medusa.cli show` | Show current config and auth status |
+| `uv run python -m medusa.cli clear` | Remove stored credentials for a provider |
 
-Supported sources:
+---
 
-- a repo-local credential file at `.credentials/openai_codex.json`
-- an existing Codex CLI login at `~/.codex/auth.json`
+## Provider Auth Details
 
-To run the official Codex login flow and import the result into this repo:
+### Anthropic
 
-```bash
-./.venv/Scripts/python.exe manage_openai_auth.py login
+Three auth methods are available during `setup`:
+
+- **OAuth/setup token** — paste a token starting with `sk-ant-oat*`. Saved to `.credentials/anthropic.json`.
+- **Import Claude Code CLI** — imports credentials from `~/.claude/.credentials.json` if you are already logged into Claude Code CLI.
+- **API key** — paste your `ANTHROPIC_API_KEY`. The CLI will tell you to add it to your `.env` file (keys are read from env, not stored directly).
+
+`.env` file for API key:
+```
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-To reuse an existing Codex CLI login without re-running browser auth:
+### OpenAI Codex
 
-```bash
-./.venv/Scripts/python.exe manage_openai_auth.py import-cli
+Three auth methods are available during `setup`:
+
+- **OAuth login** — runs the Codex CLI browser login flow and imports the result to `.credentials/openai_codex.json`.
+- **Import Codex CLI** — imports an existing `~/.codex/auth.json` without re-running browser auth.
+- **Env var** — set `OPENAI_CODEX_ACCESS_TOKEN` in your shell or `.env` file.
+
+`.env` file for env var method:
+```
+OPENAI_CODEX_ACCESS_TOKEN=...
 ```
 
-To inspect which Codex auth source Medusa will use:
+---
 
-```bash
-./.venv/Scripts/python.exe manage_openai_auth.py show --include-config
-```
+## Credential Files
 
-To switch the repo-local active provider to Codex:
+| File | Contents |
+|---|---|
+| `.credentials/llm_config.json` | Active provider + model selection |
+| `.credentials/anthropic.json` | Anthropic OAuth token (auto-refreshed on expiry) |
+| `.credentials/openai_codex.json` | OpenAI Codex JWT token |
+| `.credentials/connectors.enc` | Encrypted MCP connector credentials |
+| `.env` | API keys read at runtime (never committed) |
 
-```bash
-./.venv/Scripts/python.exe manage_openai_auth.py use --model gpt-5.4
-```
+---
 
-Medusa now reads `.credentials/llm_config.json` to decide whether runtime should use Anthropic or OpenAI Codex.
+
