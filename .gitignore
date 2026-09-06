@@ -27,6 +27,7 @@ uv.lock
 
 # Claude Code
 .claude/
+.claude/**
 .claudeignore
 # Codex
 .codex
@@ -35,7 +36,6 @@ uv.lock
 SUMMARY/
 tests/
 TODO/
-Archive/Discarded_Results/
-Archive/Results/
+Archive/
 progress/
 

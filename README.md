@@ -2,7 +2,24 @@
 
 Medusa is an AI agent that controls your Windows computer the way a human would — it looks at the screen, clicks, types, opens apps, browses the web, and works inside any application. You give it a task, it figures out the rest.
 
-> Project is in early development. More features coming soon.
+## Frontend
+
+Medusa's desktop UI lives in a separate repository:
+
+**https://github.com/mhuzaifashah/computer-ui**
+
+It is a Node.js project (Electron + React + TypeScript), so it is kept apart from this
+Python backend. Setup and usage instructions are in that repository's own README.
+
+The UI talks to the API server in this repo, so start the backend first:
+
+```bash
+uv run python server.py
+```
+
+Then follow the frontend repo's instructions to launch the UI.
+
+---
 
 ## Quick Start
 
