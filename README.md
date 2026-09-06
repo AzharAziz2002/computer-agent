@@ -2,42 +2,90 @@
 
 Medusa is an AI agent that controls your Windows computer the way a human would — it looks at the screen, clicks, types, opens apps, browses the web, and works inside any application. You give it a task, it figures out the rest.
 
-## Frontend
+---
 
-Medusa's desktop UI lives in a separate repository:
+## Project Structure
 
-**https://github.com/mhuzaifashah/computer-ui**
+> **Important:** Medusa ships as **two repositories**. This repo is the backend only.
+> To run the full desktop application you must clone **both**.
 
-It is a Node.js project (Electron + React + TypeScript), so it is kept apart from this
-Python backend. Setup and usage instructions are in that repository's own README.
+| Repository | Role | Stack |
+|---|---|---|
+| **[computer-agent](https://github.com/mhuzaifashah/computer-agent)** *(this repo)* | Agent core, computer-control tools, API server | Python 3.13 + `uv` |
+| **[computer-ui](https://github.com/mhuzaifashah/computer-ui)** | Desktop user interface | Node.js — Electron + React + TypeScript |
 
-The UI talks to the API server in this repo, so start the backend first:
+The two halves are kept in separate repositories because they are different runtimes with
+independent dependency managers, build pipelines and tooling. The frontend's own setup,
+scripts and build instructions are documented in its repository's README.
+
+The UI is a client of the API server in this repo — it has no agent logic of its own, and
+does nothing unless this backend is running.
+
+### Clone both repositories
 
 ```bash
-uv run python server.py
+git clone https://github.com/mhuzaifashah/computer-agent.git
+git clone https://github.com/mhuzaifashah/computer-ui.git
 ```
 
-Then follow the frontend repo's instructions to launch the UI.
+Keep them side by side:
+
+```
+your-folder/
+├── computer-agent/   ← backend (this repo)
+└── computer-ui/      ← frontend
+```
 
 ---
 
 ## Quick Start
 
+Complete setup, in order. **Requires Windows** and **Python 3.13+**.
+
+### 1. Backend — install dependencies
+
 ```bash
+cd computer-agent
 uv sync
 ```
 
-**Run the CLI agent:**
+### 2. Backend — configure a provider
+
+Medusa needs an LLM provider before it will run. See [Auth Setup](#auth-setup) below.
+
 ```bash
-uv run python main.py
+uv run python -m medusa.cli
 ```
 
-**Start the API server** (for frontend — does not start automatically):
+### 3. Backend — start the API server
+
+Does not start automatically. Leave it running.
+
 ```bash
 uv run python server.py
 ```
 
 The server runs at `http://127.0.0.1:8000`.
+
+### 4. Frontend — install and run
+
+In a **second terminal**:
+
+```bash
+cd computer-ui
+npm install
+npm run dev
+```
+
+The desktop window opens and connects to the backend automatically.
+
+### CLI only (no frontend)
+
+The agent is also fully usable from the terminal, without cloning or installing the UI:
+
+```bash
+uv run python main.py
+```
 
 ---
 
